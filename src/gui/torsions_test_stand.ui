@@ -163,6 +163,40 @@
              <property name="verticalSpacing">
               <number>12</number>
              </property>
+             <item row="1" column="1">
+              <widget class="QLabel" name="nidaq_activ_led">
+               <property name="enabled">
+                <bool>false</bool>
+               </property>
+               <property name="sizePolicy">
+                <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                 <horstretch>0</horstretch>
+                 <verstretch>0</verstretch>
+                </sizepolicy>
+               </property>
+               <property name="minimumSize">
+                <size>
+                 <width>24</width>
+                 <height>24</height>
+                </size>
+               </property>
+               <property name="font">
+                <font>
+                 <family>Segoe UI</family>
+                 <pointsize>9</pointsize>
+                </font>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">background-color: red;
+border-radius: 12px; 
+border: 2px solid black;
+</string>
+               </property>
+               <property name="text">
+                <string/>
+               </property>
+              </widget>
+             </item>
              <item row="0" column="0">
               <widget class="QLabel" name="label_7">
                <property name="font">
@@ -173,6 +207,19 @@
                </property>
                <property name="text">
                 <string>Process running</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="label_23">
+               <property name="font">
+                <font>
+                 <family>Segoe UI</family>
+                 <pointsize>11</pointsize>
+                </font>
+               </property>
+               <property name="text">
+                <string>NIDAQ activ</string>
                </property>
               </widget>
              </item>
@@ -210,21 +257,8 @@ border: 2px solid black;
                </property>
               </widget>
              </item>
-             <item row="1" column="0">
-              <widget class="QLabel" name="label_23">
-               <property name="font">
-                <font>
-                 <family>Segoe UI</family>
-                 <pointsize>11</pointsize>
-                </font>
-               </property>
-               <property name="text">
-                <string>NIDAQ activ</string>
-               </property>
-              </widget>
-             </item>
-             <item row="1" column="1">
-              <widget class="QLabel" name="nidaq_activ_led">
+             <item row="2" column="1">
+              <widget class="QLabel" name="N5_contr_activ_led">
                <property name="enabled">
                 <bool>false</bool>
                </property>
@@ -254,6 +288,19 @@ border: 2px solid black;
                </property>
                <property name="text">
                 <string/>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="label_29">
+               <property name="font">
+                <font>
+                 <family>Segoe UI</family>
+                 <pointsize>11</pointsize>
+                </font>
+               </property>
+               <property name="text">
+                <string>N5 Controller activ</string>
                </property>
               </widget>
              </item>
@@ -1157,7 +1204,7 @@ Hardware</string>
            </widget>
           </item>
           <item row="1" column="3">
-           <widget class="QPushButton" name="start_meas_btn_2">
+           <widget class="QPushButton" name="home_pos_btn">
             <property name="enabled">
              <bool>true</bool>
             </property>

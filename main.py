@@ -233,9 +233,8 @@ class MainWindow(QMainWindow):
         # --- Stylesheet für GUI laden ---
         self.setStyleSheet(get_dark_stylesheet())
 
-        # --- Fenster und Tabs konfigurieren ---
+        # --- Fenster konfigurieren ---
         self.move(self.screen().geometry().center() - self.frameGeometry().center())
-        self.tabWidget.setCurrentIndex(0)
         # Verwende Konstanten für Fenstertitel und Systemname
         self.setWindowTitle(SYSTEM_NAME)
         self.labelSystemName.setText(SYSTEM_NAME)
@@ -248,8 +247,6 @@ class MainWindow(QMainWindow):
         self.connectEvents()
         # --- Graph Widget initialisieren ---
         self.setup_force_graph_widget()
-        # --- DAQmx Channel ComboBoxes initialisieren ---
-        self.setup_daqmx_channel_combos()
         # --- Einfache Parameter-Initialisierung (ersetzt load_default_parameters) ---
         self.init_simple_parameters()
 
@@ -299,6 +296,7 @@ class MainWindow(QMainWindow):
         self.manual_trig_btn.clicked.connect(self.measure_daqmx)
         self.activate_hardware_btn.clicked.connect(self.activate_hardware)
         self.deactivate_hardware_btn.clicked.connect(self.deactivate_hardware)
+        self.home_pos_btn.clicked.connect(self.home_position)
         self.smp_name.returnPressed.connect(self.update_sample_name)
         self.smp_name.focusOutEvent = lambda event: (self.update_sample_name(), QtWidgets.QLineEdit.focusOutEvent(self.smp_name, event))
 
@@ -459,24 +457,13 @@ class MainWindow(QMainWindow):
         Einfache Parameter-Initialisierung mit Konstanten.
         Ersetzt das komplexe JSON-Parameter-System.
         """
-        # GUI-Elemente mit Konstanten-Werten initialisieren
-        self.force_scale.setText(str(FORCE_SCALE))
-        self.distance_scale.setText(str(DISTANCE_SCALE))
-
-        # DAQ-Kanäle setzen
-        force_index = self.daq_ch_force.findText(DAQ_CHANNEL_FORCE)
-        if force_index >= 0:
-            self.daq_ch_force.setCurrentIndex(force_index)
-
-        distance_index = self.daq_ch_distance.findText(DAQ_CHANNEL_DISTANCE)
-        if distance_index >= 0:
-            self.daq_ch_distance.setCurrentIndex(distance_index)
-
-        # Messintervall setzen
-        self.interval.setText(str(MEASUREMENT_INTERVAL))
-
         # Sample-Name setzen
         self.smp_name.setText(self.sample_name)
+
+        # Max-Werte auf 0 initialisieren (GUI-Elemente vorhanden)
+        self.max_angle.setText("0")
+        self.max_torque.setText("0")
+        self.max_velocity.setText("0")
 
         # GUI-Signale verbinden (falls noch nicht geschehen)
         if not self.grp_box_connected:
@@ -485,24 +472,24 @@ class MainWindow(QMainWindow):
         self.logger.info("Parameter mit Konstanten initialisiert (JSON-System ersetzt)")
 
     def get_current_force_scale(self) -> float:
-        """Liest den aktuellen Force-Scale-Wert aus der GUI."""
-        return self.safe_float(self.force_scale.text(), FORCE_SCALE)
+        """Gibt den Force-Scale-Wert aus den Konstanten zurück."""
+        return FORCE_SCALE
 
     def get_current_distance_scale(self) -> float:
-        """Liest den aktuellen Distance-Scale-Wert aus der GUI."""
-        return self.safe_float(self.distance_scale.text(), DISTANCE_SCALE)
+        """Gibt den Distance-Scale-Wert aus den Konstanten zurück."""
+        return DISTANCE_SCALE
 
     def get_current_force_channel(self) -> str:
-        """Liest den aktuellen Force-Kanal aus der GUI."""
-        return self.daq_ch_force.currentText()
+        """Gibt den Force-Kanal aus den Konstanten zurück."""
+        return DAQ_CHANNEL_FORCE
 
     def get_current_distance_channel(self) -> str:
-        """Liest den aktuellen Distance-Kanal aus der GUI."""
-        return self.daq_ch_distance.currentText()
+        """Gibt den Distance-Kanal aus den Konstanten zurück."""
+        return DAQ_CHANNEL_DISTANCE
 
     def get_current_interval(self) -> int:
-        """Liest das aktuelle Messintervall aus der GUI."""
-        return self.safe_int(self.interval.text(), MEASUREMENT_INTERVAL)
+        """Gibt das Messintervall aus den Konstanten zurück."""
+        return MEASUREMENT_INTERVAL
 
     def accept_parameter(self) -> None:
         """
@@ -587,35 +574,6 @@ class MainWindow(QMainWindow):
 
     # --- Instrument Funktionen ---
 
-    def setup_daqmx_channel_combos(self):
-        """
-        Befüllt die DAQmx-Kanal ComboBoxen mit den verfügbaren analogen Eingangskanälen des USB-6001.
-        Der USB-6001 hat 8 analoge Eingänge: ai0 bis ai7.
-        """
-        # USB-6001 analoge Eingangskanäle definieren (8 differentielle/16 single-ended Kanäle)
-        channels = [
-            "Dev1/ai0",  # Analog Input 0
-            "Dev1/ai1",  # Analog Input 1
-            "Dev1/ai2",  # Analog Input 2
-            "Dev1/ai3",  # Analog Input 3
-            "Dev1/ai4",  # Analog Input 4
-            "Dev1/ai5",  # Analog Input 5
-            "Dev1/ai6",  # Analog Input 6
-            "Dev1/ai7",  # Analog Input 7
-        ]
-
-        # DAQ Force Channel ComboBox befüllen
-        self.daq_ch_force.clear()
-        self.daq_ch_force.addItems(channels)
-        # Kein Standard-Wert setzen - das macht update_parameter()
-
-        # DAQ Distance Channel ComboBox befüllen
-        self.daq_ch_distance.clear()
-        self.daq_ch_distance.addItems(channels)
-        # Kein Standard-Wert setzen - das macht update_parameter()
-
-        self.logger.info("DAQmx channel combo boxes initialized with USB-6001 analog input channels")
-
     def set_setup_controls_enabled(self, enabled: bool):
         """
         Aktiviert oder deaktiviert alle Setup-Eingabefelder und -Buttons.
@@ -639,17 +597,16 @@ class MainWindow(QMainWindow):
             # Spezifische Buttons und Eingabefelder
             control_widgets = [
                 # Parameter-Eingabefelder
-                getattr(self, "force_scale", None),
-                getattr(self, "daq_ch_force", None),
-                getattr(self, "distance_scale", None),
-                getattr(self, "daq_ch_distance", None),
-                getattr(self, "interval", None),
+                getattr(self, "max_angle", None),
+                getattr(self, "max_torque", None),
+                getattr(self, "max_velocity", None),
                 # Buttons
                 getattr(self, "btn_select_proj_folder", None),
                 getattr(self, "start_meas_btn", None),
                 getattr(self, "manual_trig_btn", None),
                 getattr(self, "activate_hardware_btn", None),
                 getattr(self, "deactivate_hardware_btn", None),
+                getattr(self, "home_pos_btn", None),
                 # Sample Name Eingabe
                 getattr(self, "smp_name", None),
             ]
@@ -736,11 +693,10 @@ class MainWindow(QMainWindow):
             force_value = force_volt * self.get_current_force_scale()
             distance_value = distance_volt * self.get_current_distance_scale()
 
-            # GUI-Elemente aktualisieren
-            self.volt_force.setText(f"{force_volt:.6f}")
-            self.volt_distance.setText(f"{distance_volt:.6f}")
+            # GUI-Elemente aktualisieren (nur vorhandene Widgets)
             self.force_meas.setText(f"{force_value:.6f}")
             self.distance_meas.setText(f"{distance_value:.6f}")
+            self.dmm_voltage.setText(f"{force_volt:.6f}")
 
             # Optional: Graph-Punkt hinzufügen (nur wenn keine Messung läuft)
             if not self.is_process_running:
@@ -755,6 +711,27 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error during manual DAQmx measurement: {e}")
             QMessageBox.critical(self, "Error", f"Failed to read DAQmx values:\n{e}")
+
+    def home_position(self) -> None:
+        """
+        Fährt den Motor in die Home-Position.
+        """
+        if not self.are_instruments_initialized:
+            self.logger.warning("Hardware not initialized. Please activate hardware first.")
+            return
+
+        if self.is_process_running:
+            self.logger.warning("Cannot home position while measurement is running.")
+            return
+
+        if self.motor_controller and self.motor_controller.is_connected:
+            self.logger.info("Moving motor to home position...")
+            if self.motor_controller.move_to_position(0.0):
+                self.logger.info("Motor homed successfully")
+            else:
+                self.logger.error("Failed to home motor")
+        else:
+            self.logger.warning("Motor controller not available")
 
     # ----------Measurement-------------------
 
@@ -849,14 +826,11 @@ class MainWindow(QMainWindow):
             self.logger.error("Instruments not initialized. Please activate hardware first.")
             QMessageBox.critical(self, "Error", "Instruments not initialized. Please activate hardware first.")
             return
-        # Startzeit in GUI anzeigen
+        # Startzeit für verstrichene Zeit speichern
         from datetime import datetime
 
-        start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.start_time.setText(start_timestamp)
-
-        # Startzeit für verstrichene Zeit speichern
         self.start_time_timestamp = datetime.now()
+        self.logger.info(f"Measurement started at {self.start_time_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Den Messordner erstellen
         if not self.create_measurement_folder():
@@ -897,7 +871,6 @@ class MainWindow(QMainWindow):
 
         # Startzeit zurücksetzen
         self.start_time_timestamp = None
-        self.elapsed_time.setText("00:00:00.0")
 
         self.logger.info("Measurement stopped successfully")
 
@@ -1066,8 +1039,8 @@ class MainWindow(QMainWindow):
             distance_value (float): Umgerechnete Distanz in Millimeter
         """
         # Spannungswerte anzeigen (6 Nachkommastellen für Präzision)
-        self.volt_force.setText(f"{force_volt:.6f}")
-        self.volt_distance.setText(f"{distance_volt:.6f}")
+        # Verwende dmm_voltage für die Spannungsanzeige
+        self.dmm_voltage.setText(f"{force_volt:.6f}")
 
         # Physikalische Werte anzeigen (6 Nachkommastellen für Präzision)
         self.force_meas.setText(f"{force_value:.6f}")
