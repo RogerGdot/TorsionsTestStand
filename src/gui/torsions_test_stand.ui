@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>1217</width>
-    <height>926</height>
+    <height>890</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -113,21 +113,33 @@
          <property name="frameShadow">
           <enum>QFrame::Raised</enum>
          </property>
-         <layout class="QVBoxLayout" name="verticalLayout_5">
+         <layout class="QVBoxLayout" name="verticalLayout_2">
           <item>
-           <widget class="QLabel" name="labelSystemName">
-            <property name="font">
-             <font>
-              <family>Segoe UI</family>
-              <pointsize>11</pointsize>
-             </font>
+           <widget class="QFrame" name="frame_2">
+            <property name="frameShape">
+             <enum>QFrame::StyledPanel</enum>
             </property>
-            <property name="text">
-             <string>Torsions Test Bench</string>
+            <property name="frameShadow">
+             <enum>QFrame::Raised</enum>
             </property>
+            <layout class="QVBoxLayout" name="verticalLayout">
+             <item>
+              <widget class="QLabel" name="labelSystemName">
+               <property name="font">
+                <font>
+                 <family>Segoe UI</family>
+                 <pointsize>11</pointsize>
+                </font>
+               </property>
+               <property name="text">
+                <string>Torsions Test Bench</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
            </widget>
           </item>
-          <item>
+          <item alignment="Qt::AlignTop">
            <widget class="QFrame" name="frame_status2">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -147,7 +159,7 @@
             <property name="frameShadow">
              <enum>QFrame::Raised</enum>
             </property>
-            <layout class="QFormLayout" name="formLayout">
+            <layout class="QGridLayout" name="gridLayout_4">
              <property name="verticalSpacing">
               <number>12</number>
              </property>
@@ -248,6 +260,237 @@ border: 2px solid black;
             </layout>
            </widget>
           </item>
+          <item>
+           <widget class="QFrame" name="frame_4">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::StyledPanel</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Raised</enum>
+            </property>
+            <layout class="QVBoxLayout" name="verticalLayout_8" stretch="0">
+             <property name="spacing">
+              <number>6</number>
+             </property>
+             <property name="leftMargin">
+              <number>6</number>
+             </property>
+             <property name="topMargin">
+              <number>6</number>
+             </property>
+             <property name="rightMargin">
+              <number>6</number>
+             </property>
+             <property name="bottomMargin">
+              <number>6</number>
+             </property>
+             <item alignment="Qt::AlignTop">
+              <widget class="QFrame" name="frame_status1">
+               <property name="sizePolicy">
+                <sizepolicy hsizetype="Maximum" vsizetype="Expanding">
+                 <horstretch>0</horstretch>
+                 <verstretch>1</verstretch>
+                </sizepolicy>
+               </property>
+               <property name="font">
+                <font>
+                 <family>Segoe UI</family>
+                 <pointsize>11</pointsize>
+                </font>
+               </property>
+               <property name="frameShape">
+                <enum>QFrame::StyledPanel</enum>
+               </property>
+               <property name="frameShadow">
+                <enum>QFrame::Raised</enum>
+               </property>
+               <layout class="QGridLayout" name="gridLayout_3">
+                <property name="verticalSpacing">
+                 <number>6</number>
+                </property>
+                <item row="3" column="0">
+                 <widget class="QLabel" name="label_14">
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>Degree</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="0" column="2">
+                 <widget class="QLabel" name="label_27">
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>V</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="3" column="2">
+                 <widget class="QLabel" name="label_16">
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>deg</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="0" column="0">
+                 <widget class="QLabel" name="label_26">
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>DMM Voltage</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="3" column="1">
+                 <widget class="QLineEdit" name="distance_meas">
+                  <property name="enabled">
+                   <bool>false</bool>
+                  </property>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="minimumSize">
+                   <size>
+                    <width>0</width>
+                    <height>0</height>
+                   </size>
+                  </property>
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string/>
+                  </property>
+                  <property name="alignment">
+                   <set>Qt::AlignCenter</set>
+                  </property>
+                 </widget>
+                </item>
+                <item row="1" column="0">
+                 <widget class="QLabel" name="label_8">
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>Torque</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="1" column="2">
+                 <widget class="QLabel" name="label_15">
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>Nm</string>
+                  </property>
+                 </widget>
+                </item>
+                <item row="1" column="1">
+                 <widget class="QLineEdit" name="force_meas">
+                  <property name="enabled">
+                   <bool>false</bool>
+                  </property>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="minimumSize">
+                   <size>
+                    <width>0</width>
+                    <height>0</height>
+                   </size>
+                  </property>
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string/>
+                  </property>
+                  <property name="alignment">
+                   <set>Qt::AlignCenter</set>
+                  </property>
+                 </widget>
+                </item>
+                <item row="0" column="1">
+                 <widget class="QLineEdit" name="dmm_voltage">
+                  <property name="enabled">
+                   <bool>false</bool>
+                  </property>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="minimumSize">
+                   <size>
+                    <width>0</width>
+                    <height>0</height>
+                   </size>
+                  </property>
+                  <property name="font">
+                   <font>
+                    <family>Segoe UI</family>
+                    <pointsize>11</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string/>
+                  </property>
+                  <property name="alignment">
+                   <set>Qt::AlignCenter</set>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -337,541 +580,6 @@ border: 2px solid black;
              </property>
              <layout class="QHBoxLayout" name="horizontalLayout">
               <item>
-               <widget class="QFrame" name="frame_4">
-                <property name="sizePolicy">
-                 <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-                  <horstretch>0</horstretch>
-                  <verstretch>0</verstretch>
-                 </sizepolicy>
-                </property>
-                <property name="frameShape">
-                 <enum>QFrame::StyledPanel</enum>
-                </property>
-                <property name="frameShadow">
-                 <enum>QFrame::Raised</enum>
-                </property>
-                <layout class="QVBoxLayout" name="verticalLayout_8" stretch="1,0">
-                 <property name="spacing">
-                  <number>6</number>
-                 </property>
-                 <property name="leftMargin">
-                  <number>6</number>
-                 </property>
-                 <property name="topMargin">
-                  <number>6</number>
-                 </property>
-                 <property name="rightMargin">
-                  <number>6</number>
-                 </property>
-                 <property name="bottomMargin">
-                  <number>6</number>
-                 </property>
-                 <item alignment="Qt::AlignTop">
-                  <widget class="QGroupBox" name="setup_grpBox">
-                   <property name="sizePolicy">
-                    <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-                     <horstretch>0</horstretch>
-                     <verstretch>1</verstretch>
-                    </sizepolicy>
-                   </property>
-                   <property name="title">
-                    <string>SETUP</string>
-                   </property>
-                   <layout class="QGridLayout" name="gridLayout_2">
-                    <property name="spacing">
-                     <number>6</number>
-                    </property>
-                    <item row="1" column="1">
-                     <widget class="QComboBox" name="daq_ch_force"/>
-                    </item>
-                    <item row="0" column="0">
-                     <widget class="QLabel" name="label_17">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Force Scaling</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="3" column="1">
-                     <widget class="QComboBox" name="daq_ch_distance"/>
-                    </item>
-                    <item row="3" column="0">
-                     <widget class="QLabel" name="label_31">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>DAQ Ch. Distance_V</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="2" column="1">
-                     <widget class="QLineEdit" name="distance_scale">
-                      <property name="enabled">
-                       <bool>true</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="0" column="2">
-                     <widget class="QLabel" name="label_20">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>N/V</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="2" column="2">
-                     <widget class="QLabel" name="label_21">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>mm/V</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="3" column="2">
-                     <widget class="QLabel" name="label_38">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>#</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="1" column="0">
-                     <widget class="QLabel" name="label_29">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>DAQ Ch. Force_V</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="4" column="2">
-                     <widget class="QLabel" name="label_22">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>s</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="1" column="2">
-                     <widget class="QLabel" name="label_39">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>#</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="4" column="0">
-                     <widget class="QLabel" name="label_19">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Measure Interval</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="2" column="0">
-                     <widget class="QLabel" name="label_18">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Distance Scaling</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="0" column="1">
-                     <widget class="QLineEdit" name="force_scale">
-                      <property name="enabled">
-                       <bool>true</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="4" column="1">
-                     <widget class="QLineEdit" name="interval">
-                      <property name="enabled">
-                       <bool>true</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                   </layout>
-                  </widget>
-                 </item>
-                 <item alignment="Qt::AlignTop">
-                  <widget class="QFrame" name="frame_status1">
-                   <property name="sizePolicy">
-                    <sizepolicy hsizetype="Maximum" vsizetype="Expanding">
-                     <horstretch>0</horstretch>
-                     <verstretch>1</verstretch>
-                    </sizepolicy>
-                   </property>
-                   <property name="font">
-                    <font>
-                     <family>Segoe UI</family>
-                     <pointsize>11</pointsize>
-                    </font>
-                   </property>
-                   <property name="frameShape">
-                    <enum>QFrame::StyledPanel</enum>
-                   </property>
-                   <property name="frameShadow">
-                    <enum>QFrame::Raised</enum>
-                   </property>
-                   <layout class="QGridLayout" name="gridLayout_3">
-                    <property name="verticalSpacing">
-                     <number>6</number>
-                    </property>
-                    <item row="4" column="0">
-                     <widget class="QLabel" name="label_14">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Distance</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="1" column="2">
-                     <widget class="QLabel" name="label_37">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>V</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="4" column="1">
-                     <widget class="QLineEdit" name="distance_meas">
-                      <property name="enabled">
-                       <bool>false</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="2" column="1">
-                     <widget class="QLineEdit" name="force_meas">
-                      <property name="enabled">
-                       <bool>false</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="0" column="1">
-                     <widget class="QLineEdit" name="volt_force">
-                      <property name="enabled">
-                       <bool>false</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="2" column="0">
-                     <widget class="QLabel" name="label_8">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Force</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="4" column="2">
-                     <widget class="QLabel" name="label_16">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>mm</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="0" column="0">
-                     <widget class="QLabel" name="label_26">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Voltage Force</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="1" column="1">
-                     <widget class="QLineEdit" name="volt_distance">
-                      <property name="enabled">
-                       <bool>false</bool>
-                      </property>
-                      <property name="sizePolicy">
-                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-                        <horstretch>0</horstretch>
-                        <verstretch>0</verstretch>
-                       </sizepolicy>
-                      </property>
-                      <property name="minimumSize">
-                       <size>
-                        <width>0</width>
-                        <height>0</height>
-                       </size>
-                      </property>
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string/>
-                      </property>
-                      <property name="alignment">
-                       <set>Qt::AlignCenter</set>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="0" column="2">
-                     <widget class="QLabel" name="label_27">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>V</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="1" column="0">
-                     <widget class="QLabel" name="label_36">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>Voltage Force</string>
-                      </property>
-                     </widget>
-                    </item>
-                    <item row="2" column="2">
-                     <widget class="QLabel" name="label_15">
-                      <property name="font">
-                       <font>
-                        <family>Segoe UI</family>
-                        <pointsize>11</pointsize>
-                       </font>
-                      </property>
-                      <property name="text">
-                       <string>N</string>
-                      </property>
-                     </widget>
-                    </item>
-                   </layout>
-                  </widget>
-                 </item>
-                </layout>
-               </widget>
-              </item>
-              <item>
                <widget class="QFrame" name="frame_3">
                 <property name="sizePolicy">
                  <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
@@ -885,12 +593,159 @@ border: 2px solid black;
                 <property name="frameShadow">
                  <enum>QFrame::Raised</enum>
                 </property>
-                <layout class="QVBoxLayout" name="verticalLayout_7" stretch="0">
+                <layout class="QVBoxLayout" name="verticalLayout_7" stretch="0,0">
                  <property name="bottomMargin">
                   <number>0</number>
                  </property>
+                 <item alignment="Qt::AlignLeft">
+                  <widget class="QGroupBox" name="stop_cond_grpBox">
+                   <property name="title">
+                    <string>Drive Setup</string>
+                   </property>
+                   <layout class="QHBoxLayout" name="horizontalLayout_2">
+                    <item>
+                     <widget class="QLabel" name="label_24">
+                      <property name="font">
+                       <font>
+                        <family>Segoe UI</family>
+                        <pointsize>11</pointsize>
+                       </font>
+                      </property>
+                      <property name="text">
+                       <string>Max Angle [deg]</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLineEdit" name="max_angle">
+                      <property name="enabled">
+                       <bool>true</bool>
+                      </property>
+                      <property name="sizePolicy">
+                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                        <horstretch>0</horstretch>
+                        <verstretch>0</verstretch>
+                       </sizepolicy>
+                      </property>
+                      <property name="minimumSize">
+                       <size>
+                        <width>0</width>
+                        <height>0</height>
+                       </size>
+                      </property>
+                      <property name="font">
+                       <font>
+                        <family>Segoe UI</family>
+                        <pointsize>11</pointsize>
+                       </font>
+                      </property>
+                      <property name="text">
+                       <string/>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLabel" name="label_25">
+                      <property name="font">
+                       <font>
+                        <family>Segoe UI</family>
+                        <pointsize>11</pointsize>
+                       </font>
+                      </property>
+                      <property name="text">
+                       <string>Max-Torque [Nm]</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLineEdit" name="max_torque">
+                      <property name="enabled">
+                       <bool>true</bool>
+                      </property>
+                      <property name="sizePolicy">
+                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                        <horstretch>0</horstretch>
+                        <verstretch>0</verstretch>
+                       </sizepolicy>
+                      </property>
+                      <property name="minimumSize">
+                       <size>
+                        <width>0</width>
+                        <height>0</height>
+                       </size>
+                      </property>
+                      <property name="font">
+                       <font>
+                        <family>Segoe UI</family>
+                        <pointsize>11</pointsize>
+                       </font>
+                      </property>
+                      <property name="text">
+                       <string/>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLabel" name="label_28">
+                      <property name="font">
+                       <font>
+                        <family>Segoe UI</family>
+                        <pointsize>11</pointsize>
+                       </font>
+                      </property>
+                      <property name="text">
+                       <string>Max-Velocity [deg/s]</string>
+                      </property>
+                     </widget>
+                    </item>
+                    <item>
+                     <widget class="QLineEdit" name="max_velocity">
+                      <property name="enabled">
+                       <bool>true</bool>
+                      </property>
+                      <property name="sizePolicy">
+                       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+                        <horstretch>0</horstretch>
+                        <verstretch>0</verstretch>
+                       </sizepolicy>
+                      </property>
+                      <property name="minimumSize">
+                       <size>
+                        <width>0</width>
+                        <height>0</height>
+                       </size>
+                      </property>
+                      <property name="font">
+                       <font>
+                        <family>Segoe UI</family>
+                        <pointsize>11</pointsize>
+                       </font>
+                      </property>
+                      <property name="text">
+                       <string/>
+                      </property>
+                      <property name="alignment">
+                       <set>Qt::AlignCenter</set>
+                      </property>
+                     </widget>
+                    </item>
+                   </layout>
+                  </widget>
+                 </item>
                  <item>
                   <widget class="QFrame" name="force_graph_frame">
+                   <property name="sizePolicy">
+                    <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+                     <horstretch>0</horstretch>
+                     <verstretch>0</verstretch>
+                    </sizepolicy>
+                   </property>
                    <property name="frameShape">
                     <enum>QFrame::StyledPanel</enum>
                    </property>
@@ -1183,7 +1038,7 @@ PROCESS</string>
             </property>
             <property name="text">
              <string>Start
-Measurement</string>
+ Process</string>
             </property>
            </widget>
           </item>
@@ -1298,6 +1153,44 @@ Hardware</string>
             <property name="text">
              <string>Activate
 Hardware</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="3">
+           <widget class="QPushButton" name="start_meas_btn_2">
+            <property name="enabled">
+             <bool>true</bool>
+            </property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>100</width>
+              <height>50</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>999999</width>
+              <height>999999</height>
+             </size>
+            </property>
+            <property name="font">
+             <font>
+              <family>Segoe UI</family>
+              <pointsize>11</pointsize>
+             </font>
+            </property>
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="text">
+             <string>Home
+ Position</string>
             </property>
            </widget>
           </item>
