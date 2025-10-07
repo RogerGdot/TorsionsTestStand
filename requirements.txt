@@ -1,0 +1,26 @@
+# Torsionsprüfstand - Minimal Requirements für Techniker-Abschlussarbeit
+# ========================================================================
+
+# GUI Framework
+PyQt6>=6.9.1
+
+# Plotting and Graphics  
+pyqtgraph>=0.13.7
+
+# Hardware Interface (optional - falls NI DAQmx verwendet wird)
+nidaqmx>=1.2.0
+
+# Scientific Computing
+numpy>=2.1.3
+
+# Data Handling (für erweiterte Datenauswertung)
+pandas>=2.2.3
+openpyxl>=3.1.5
+
+# Logging and Utilities
+# (Standardbibliotheken - kein pip install nötig)
+
+# Hinweise:
+# - opencv-python wurde entfernt (Kamera-Funktionen nicht mehr benötigt)
+# - nidaqmx ist optional und nur bei Verwendung von NI-Hardware erforderlich
+# - Alle anderen Pakete sind für die Grundfunktionalität des Torsionsprüfstands notwendig

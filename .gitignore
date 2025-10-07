@@ -1,0 +1,15 @@
+/.venv
+/__pycache__
+*.egg-info/
+*.log
+/*.pyc
+__pycache__
+/dev_test
+
+*.exe
+*.spec
+/data
+
+/logs
+/build
+/dist
