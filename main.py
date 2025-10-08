@@ -29,29 +29,8 @@ Features:
 
 import logging
 import os
-import random
 import sys
-import time
 from datetime import datetime
-
-# Hardware-spezifische Imports
-try:
-    import nidaqmx
-    from nidaqmx.constants import TerminalConfiguration
-
-    NIDAQMX_AVAILABLE = True
-except ImportError:
-    NIDAQMX_AVAILABLE = False
-    print("NI DAQmx nicht verfügbar - Demo-Modus wird verwendet")
-
-try:
-    from pymodbus.client import ModbusTcpClient
-    from pymodbus.exceptions import ModbusException
-
-    PYMODBUS_AVAILABLE = True
-except ImportError:
-    PYMODBUS_AVAILABLE = False
-    print("PyModbus nicht verfügbar - Demo-Modus wird verwendet")
 
 # PyQt6 Imports
 import pyqtgraph as pg
@@ -69,7 +48,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+# Project Imports
 from src.gui.stylesheet import get_dark_stylesheet
+from src.hardware import DAQmxTask, N5NanotecController
 from src.utils.framework_helper import GuiLogger, WrappingFormatter
 
 # ===========================================================================================
@@ -110,305 +91,8 @@ DEFAULT_MAX_VELOCITY = 10.0  # Standard Geschwindigkeit [Grad/s] (+ = Uhrzeiger,
 SYSTEM_NAME = "Torsions Test Stand - DF-30 Sensor"
 
 # ===========================================================================================
-
-
-class N5NanotecController:
-    """
-    N5 Nanotec Stepper Motor Controller via Modbus TCP.
-    Closed-Loop Position Control mit Positionsabfrage.
-    """
-
-    def __init__(self, ip_address: str = N5_IP_ADDRESS, port: int = N5_MODBUS_PORT, slave_id: int = N5_SLAVE_ID, demo_mode: bool = DEMO_MODE):
-        """
-        Initialisiert den N5 Nanotec Controller.
-
-        Args:
-            ip_address (str): IP-Adresse des N5 Controllers
-            port (int): Modbus TCP Port
-            slave_id (int): Modbus Slave ID
-            demo_mode (bool): Demo-Modus für Simulation
-        """
-        self.ip_address = ip_address
-        self.port = port
-        self.slave_id = slave_id
-        self.demo_mode = demo_mode
-        self.is_connected = False
-        self.client = None
-
-        # Position und Bewegung
-        self.current_position = 0.0  # Aktuelle Position in Grad
-        self.target_position = 0.0  # Zielposition in Grad
-        self.is_moving = False  # Bewegungsstatus
-        self.velocity = 0.0  # Geschwindigkeit in Grad/s
-
-        # Demo-Mode Simulation
-        self.demo_start_time = None
-        self.demo_start_position = 0.0
-
-    def connect(self) -> bool:
-        """Verbindet mit dem N5 Controller."""
-        if self.demo_mode:
-            print("[DEMO] N5 Nanotec Controller - Simulation aktiv")
-            self.is_connected = True
-            self.current_position = 0.0
-            return True
-
-        if not PYMODBUS_AVAILABLE:
-            print("PyModbus nicht verfügbar - N5 Steuerung nicht möglich")
-            return False
-
-        try:
-            self.client = ModbusTcpClient(self.ip_address, port=self.port)
-            connection = self.client.connect()
-            if connection:
-                self.is_connected = True
-                print(f"N5 Nanotec verbunden: {self.ip_address}:{self.port}")
-                return True
-            else:
-                print(f"N5 Nanotec Verbindung fehlgeschlagen: {self.ip_address}:{self.port}")
-                return False
-        except Exception as e:
-            print(f"N5 Nanotec Verbindungsfehler: {e}")
-            return False
-
-    def disconnect(self) -> None:
-        """Trennt die Verbindung zum N5 Controller."""
-        if self.demo_mode:
-            self.is_connected = False
-            return
-
-        if self.client and self.is_connected:
-            self.client.close()
-            self.is_connected = False
-            print("N5 Nanotec getrennt")
-
-    def home_position(self) -> bool:
-        """Fährt den Motor in die Home-Position (0°)."""
-        if not self.is_connected:
-            print("N5 nicht verbunden")
-            return False
-
-        if self.demo_mode:
-            print("[DEMO] N5 fährt in Home-Position (0°)")
-            self.current_position = 0.0
-            self.target_position = 0.0
-            self.is_moving = False
-            return True
-
-        # Hier würde der echte Modbus-Befehl kommen
-        # Beispiel: self.client.write_register(address, value, unit=self.slave_id)
-        self.target_position = 0.0
-        self.current_position = 0.0
-        return True
-
-    def move_continuous(self, velocity: float) -> bool:
-        """
-        Startet kontinuierliche Bewegung mit gegebener Geschwindigkeit.
-
-        Args:
-            velocity (float): Geschwindigkeit in Grad/s (+ = Uhrzeiger, - = Gegen Uhrzeiger)
-
-        Returns:
-            bool: True wenn erfolgreich
-        """
-        if not self.is_connected:
-            print("N5 nicht verbunden")
-            return False
-
-        self.velocity = velocity
-        self.is_moving = True
-
-        if self.demo_mode:
-            self.demo_start_time = time.time()
-            self.demo_start_position = self.current_position
-            print(f"[DEMO] N5 startet Bewegung mit {velocity:.2f}°/s")
-            return True
-
-        # Hier würde der echte Modbus-Befehl für kontinuierliche Bewegung kommen
-        return True
-
-    def stop_movement(self) -> bool:
-        """Stoppt die aktuelle Bewegung sofort."""
-        if not self.is_connected:
-            return False
-
-        self.is_moving = False
-        self.velocity = 0.0
-
-        if self.demo_mode:
-            print(f"[DEMO] N5 gestoppt bei Position {self.current_position:.2f}°")
-            return True
-
-        # Hier würde der echte Modbus-Stop-Befehl kommen
-        return True
-
-    def get_position(self) -> float:
-        """
-        Liest die aktuelle Position vom N5 Controller (Closed-Loop).
-
-        Returns:
-            float: Aktuelle Position in Grad
-        """
-        if not self.is_connected:
-            return 0.0
-
-        if self.demo_mode:
-            # Simuliere Bewegung basierend auf Geschwindigkeit und Zeit
-            if self.is_moving and self.demo_start_time is not None:
-                elapsed_time = time.time() - self.demo_start_time
-                self.current_position = self.demo_start_position + (self.velocity * elapsed_time)
-            return self.current_position
-
-        # Hier würde die echte Positionsabfrage via Modbus kommen
-        # Beispiel: result = self.client.read_holding_registers(address, count=1, unit=self.slave_id)
-        return self.current_position
-
-
-class DemoHardwareSimulator:
-    """
-    Demo-Hardware-Simulator für Tests ohne echte Hardware.
-    Simuliert DF-30 Sensor und N5 Nanotec Motor.
-    """
-
-    def __init__(self):
-        self.torque_offset = 0.0  # Torque-Nullpunkt nach Kalibrierung
-        self.current_angle = 0.0  # Aktueller Winkel
-        self.is_running = False
-        self.start_time = None
-
-    def get_simulated_torque(self, angle: float) -> float:
-        """
-        Simuliert Drehmoment basierend auf Winkel.
-        Einfaches lineares Modell: Torque steigt mit Winkel.
-
-        Args:
-            angle (float): Aktueller Winkel in Grad
-
-        Returns:
-            float: Simuliertes Drehmoment in Nm
-        """
-        # Simuliere elastisches Torsionsverhalten
-        # Drehmoment steigt linear mit Winkel, plus kleines Rauschen
-        base_torque = angle * 0.05  # 0.05 Nm pro Grad
-        noise = random.uniform(-0.1, 0.1)  # Kleines Rauschen
-        torque = base_torque + noise + self.torque_offset
-
-        # Begrenze auf ±20 Nm (DF-30 Sensor Bereich)
-        torque = max(-20.0, min(20.0, torque))
-        return torque
-
-    def get_simulated_voltage(self, torque: float) -> float:
-        """
-        Konvertiert Drehmoment zu Spannung (Messverstärker-Ausgang).
-
-        Args:
-            torque (float): Drehmoment in Nm
-
-        Returns:
-            float: Spannung in V (±10V)
-        """
-        # ±20 Nm → ±10V
-        voltage = torque / TORQUE_SCALE
-        return voltage
-
-    def calibrate_zero(self) -> None:
-        """Kalibriert den Nullpunkt (aktuelles Drehmoment = 0)."""
-        current_torque = self.get_simulated_torque(self.current_angle)
-        self.torque_offset = -current_torque
-        print(f"[DEMO] Torque kalibriert (Offset: {self.torque_offset:.3f} Nm)")
-
-
-class DAQmxTask:
-    """
-    Hardware-abstrakte Klasse für Datenerfassung mit NI-6000.
-    Unterstützt ±10V Messbereich für DF-30 Sensor.
-    """
-
-    def __init__(self, torque_channel: str = DAQ_CHANNEL_TORQUE, demo_mode: bool = DEMO_MODE):
-        """
-        Initialisiert eine DAQ Task für die Messung von Drehmoment.
-
-        Args:
-            torque_channel (str): DAQ-Kanal für Drehmomentmessung (z.B. "Dev1/ai0")
-            demo_mode (bool): Demo-Modus für Simulation
-        """
-        self.nidaqmx_task = None
-        self.torque_channel = torque_channel
-        self.demo_mode = demo_mode
-        self.is_task_created = False
-        self.demo_simulator = DemoHardwareSimulator() if demo_mode else None
-
-    def create_nidaqmx_task(self):
-        """
-        Erzeugt eine NI DAQmx Task für den konfigurierten AI-Kanal.
-        """
-        if self.demo_mode:
-            print("[DEMO] NI-6000 DAQ - Simulation aktiv")
-            self.is_task_created = True
-            return
-
-        if not NIDAQMX_AVAILABLE:
-            print("NI DAQmx nicht verfügbar - Demo-Modus erforderlich")
-            self.is_task_created = False
-            return
-
-        try:
-            task = nidaqmx.Task()
-            # Torque-Kanal mit ±10V Range hinzufügen
-            task.ai_channels.add_ai_voltage_chan(
-                self.torque_channel, terminal_config=TerminalConfiguration.DEFAULT, min_val=-DAQ_VOLTAGE_RANGE, max_val=DAQ_VOLTAGE_RANGE
-            )
-            self.nidaqmx_task = task
-            self.is_task_created = True
-            print(f"NIDAQmx task erstellt: {self.torque_channel} (±{DAQ_VOLTAGE_RANGE}V)")
-        except Exception as e:
-            print(f"Fehler beim Erstellen der NIDAQmx task: {e}")
-            self.is_task_created = False
-
-    def read_torque_voltage(self, current_angle: float = 0.0) -> float:
-        """
-        Liest die Spannung vom Drehmoment-Sensor.
-
-        Args:
-            current_angle (float): Aktueller Winkel für Demo-Simulation
-
-        Returns:
-            float: Spannung in V
-        """
-        if self.demo_mode:
-            # Demo-Modus: Simuliere Spannung basierend auf Winkel
-            torque = self.demo_simulator.get_simulated_torque(current_angle)
-            voltage = self.demo_simulator.get_simulated_voltage(torque)
-            return voltage
-
-        task = self.nidaqmx_task
-        if task is None:
-            raise RuntimeError("Task ist nicht initialisiert")
-
-        # Echte Hardware: Lese Spannung von DAQ
-        values = task.read(number_of_samples_per_channel=1)
-        if isinstance(values, list):
-            return float(values[0])
-        else:
-            return float(values)
-
-    def calibrate_zero(self) -> None:
-        """Kalibriert den Nullpunkt des Sensors."""
-        if self.demo_mode and self.demo_simulator:
-            self.demo_simulator.calibrate_zero()
-
-    def close_nidaqmx_task(self) -> None:
-        """
-        Schliesst die Task und gibt alle Ressourcen frei.
-        """
-        if self.demo_mode:
-            self.is_task_created = False
-            return
-
-        task = self.nidaqmx_task
-        if task is None:
-            return
-        task.close()
+# HAUPTPROGRAMM - GUI und Steuerungslogik
+# ===========================================================================================
 
 
 class MainWindow(QMainWindow):
@@ -751,7 +435,7 @@ class MainWindow(QMainWindow):
         # --- NI-6000 DAQ aktivieren ---
         try:
             self.logger.info(f"Initialisiere NI-6000 DAQ (Kanal: {DAQ_CHANNEL_TORQUE})...")
-            self.nidaqmx_task = DAQmxTask(DAQ_CHANNEL_TORQUE, demo_mode=DEMO_MODE)
+            self.nidaqmx_task = DAQmxTask(torque_channel=DAQ_CHANNEL_TORQUE, voltage_range=DAQ_VOLTAGE_RANGE, torque_scale=TORQUE_SCALE, demo_mode=DEMO_MODE)
             self.nidaqmx_task.create_nidaqmx_task()
 
             if self.nidaqmx_task.is_task_created:
@@ -770,7 +454,7 @@ class MainWindow(QMainWindow):
         # --- N5 Nanotec Motor aktivieren ---
         try:
             self.logger.info(f"Initialisiere N5 Nanotec Controller (IP: {N5_IP_ADDRESS})...")
-            self.motor_controller = N5NanotecController(demo_mode=DEMO_MODE)
+            self.motor_controller = N5NanotecController(ip_address=N5_IP_ADDRESS, port=N5_MODBUS_PORT, slave_id=N5_SLAVE_ID, demo_mode=DEMO_MODE)
 
             if self.motor_controller.connect():
                 self.logger.info("✓ N5 Nanotec Controller erfolgreich verbunden")

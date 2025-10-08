@@ -10,6 +10,9 @@ pyqtgraph>=0.13.7
 # Hardware Interface (optional - falls NI DAQmx verwendet wird)
 nidaqmx>=1.2.0
 
+# Modbus TCP Communication (für N5 Nanotec Stepper Motor)
+pymodbus>=3.7.4
+
 # Scientific Computing
 numpy>=2.1.3
 

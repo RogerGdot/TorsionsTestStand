@@ -22,6 +22,8 @@ Hardware:
 import sys
 import time
 
+# Verwende die Hardware-Module aus src/hardware
+
 try:
     import nidaqmx
     from nidaqmx.constants import TerminalConfiguration

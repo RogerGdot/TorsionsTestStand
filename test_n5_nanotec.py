@@ -23,9 +23,10 @@ Hardware:
 import sys
 import time
 
+# Verwende die Hardware-Module aus src/hardware
+
 try:
     from pymodbus.client import ModbusTcpClient
-    from pymodbus.exceptions import ModbusException
 
     PYMODBUS_AVAILABLE = True
 except ImportError:
