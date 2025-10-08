@@ -290,11 +290,15 @@ class MainWindow(QMainWindow):
     def setup_torque_graph_widget(self):
         """Erstellt PyQtGraph für Torque vs. Angle Plot."""
         graph_layout = QVBoxLayout(self.force_graph_frame)
+
         self.graph_widget = pg.PlotWidget()
 
+        # Titel/Überschrift über dem Graphen
+        self.graph_widget.setTitle("Torque vs. Angle", color="white", size="12pt", bold=True)
+
         # Achsen konfigurieren
-        self.graph_widget.setLabel("left", "Torque", units="Nm", color="white", **{"font-size": "10pt"})
-        self.graph_widget.setLabel("bottom", "Angle", units="°", color="white", **{"font-size": "10pt"})
+        self.graph_widget.setLabel("left", "Torque", units="Nm", color="white", **{"font-size": "13pt"})
+        self.graph_widget.setLabel("bottom", "Angle", units="°", color="white", **{"font-size": "13pt"})
         self.graph_widget.setBackground("#262a32")
         self.graph_widget.showGrid(x=True, y=True)
 
