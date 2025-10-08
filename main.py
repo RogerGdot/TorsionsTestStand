@@ -51,7 +51,7 @@ from PyQt6.QtWidgets import (
 # Project Imports
 from src.gui.stylesheet import get_dark_stylesheet
 from src.hardware import DAQmxTask, N5NanotecController
-from src.utils.framework_helper import GuiLogger, WrappingFormatter
+from src.utils.logger_helper import GuiLogger, WrappingFormatter
 
 # ===========================================================================================
 # KONFIGURATION - Alle wichtigen Parameter für den Torsionsprüfstand
@@ -118,6 +118,9 @@ class MainWindow(QMainWindow):
         self.setup_Logger()
         self.logger.info("Application started")
         self.logger.info(f"Demo-Modus: {'AKTIV' if DEMO_MODE else 'INAKTIV'}")
+
+        # --- Demo-LED Status setzen ---
+        self.update_demo_led_status()
 
         # --- GUI-Elemente und Events verbinden ---
         self.connectEvents()
@@ -327,6 +330,20 @@ class MainWindow(QMainWindow):
             self.connect_groupbox_signals()
 
         self.logger.info("Parameter mit Standardwerten initialisiert")
+
+    def update_demo_led_status(self) -> None:
+        """
+        Setzt den Status der Demo-LED basierend auf DEMO_MODE.
+        Grün = Demo-Modus aktiv, Rot = Echte Hardware
+        """
+        if DEMO_MODE:
+            # Demo-Modus aktiv - grüne LED
+            self.demo_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
+            self.logger.info("Demo-LED: GRÜN (Demo-Modus aktiv)")
+        else:
+            # Echte Hardware - rote LED
+            self.demo_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+            self.logger.info("Demo-LED: ROT (Echte Hardware)")
 
     def get_max_angle(self) -> float:
         """Liest den Max Angle Wert aus der GUI."""

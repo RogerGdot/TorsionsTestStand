@@ -308,13 +308,17 @@ TorsionsTestStand/
 ├── test_n5_nanotec.py          # N5 Nanotec Testprogramm
 ├── requirements.txt            # Python-Abhängigkeiten
 ├── README.md                   # Diese Datei
-├── main_backup.py              # Backup der alten Version
 ├── src/
+│   ├── hardware/               # Hardware-Controller
+│   │   ├── __init__.py
+│   │   ├── n5_nanotec_controller.py
+│   │   ├── daq_controller.py
+│   │   └── demo_simulator.py
 │   ├── gui/
 │   │   ├── torsions_test_stand.ui   # GUI-Design (Qt Designer)
 │   │   └── stylesheet.py            # Dark Theme
 │   └── utils/
-│       └── framework_helper.py      # Logger-Utilities
+│       └── logger_helper.py         # Logger-Utilities
 └── Docs/
     └── N5_ModbusTCP_Technisches-Handbuch_V3.3.0.pdf
 ```

@@ -100,7 +100,7 @@ TorsionsTestStand/
 │   │   ├── torsions_test_stand.ui
 │   │   └── stylesheet.py
 │   └── utils/
-│       └── framework_helper.py
+│       └── logger_helper.py
 └── Docs/
 ```
 
