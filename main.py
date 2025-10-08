@@ -4,32 +4,37 @@ Torsions Test Stand - Software für Torsionsprüfstand
 Projekt:    Torsions Test Stand
 Datei:      main.py
 Autor:      [Technikergruppe]
-Version:    1.0
-Lizenz:     [Lizenztyp, z.B. MIT, GPL, etc.]
+Version:    2.0
 Python:     3.13
 ------------------------------------------------------------------------------
 
 Beschreibung:
 -------------
-Diese Software steuert einen Torsionsprüfstand zur Erfassung von Kraft und Weg
-für eine Techniker-Abschlussarbeit. Die Anwendung bietet eine einfache
-grafische Benutzeroberfläche (PyQt6) für die Datenerfassung und Visualisierung.
+Diese Software steuert einen Torsionsprüfstand zur Erfassung von Drehmoment
+und Winkel für eine Techniker-Abschlussarbeit.
 
-Wichtige Features:
-- Live-Erfassung und Visualisierung von Kraft und Weg mit pyqtgraph
-- Flexible Hardware-Unterstützung (NI DAQmx oder andere Messkarten)
-- Einfache Konfiguration durch Konstanten (kein JSON-Parameter-System)
-- Ausführliche Kommentierung für Lernzwecke
-- Logging und Fehlerbehandlung
+Hardware:
+- DF-30 Drehmoment-Sensor (±20 Nm)
+- Messverstärker (±10V Ausgang)
+- NI-6000 DAQ (±10V Eingang)
+- N5 Nanotec Schrittmotor (Modbus TCP, Closed-Loop)
 
-Abhängigkeiten (requirements.txt):
+Features:
+- Demo-Modus für Tests ohne Hardware
+- Live-Visualisierung mit pyqtgraph
+- Automatische Stopbedingungen (Max Torque/Angle)
+- Home-Position und Nullpunkt-Kalibrierung
+- Bidirektionale Motor-Steuerung
 """
 
 import logging
 import os
+import random
 import sys
+import time
+from datetime import datetime
 
-# Hardware-spezifische Imports - flexibel für verschiedene Messkarten
+# Hardware-spezifische Imports
 try:
     import nidaqmx
     from nidaqmx.constants import TerminalConfiguration
@@ -37,11 +42,21 @@ try:
     NIDAQMX_AVAILABLE = True
 except ImportError:
     NIDAQMX_AVAILABLE = False
-    print("NI DAQmx nicht verfügbar - andere Messkarten-Implementierung erforderlich")
+    print("NI DAQmx nicht verfügbar - Demo-Modus wird verwendet")
 
+try:
+    from pymodbus.client import ModbusTcpClient
+    from pymodbus.exceptions import ModbusException
+
+    PYMODBUS_AVAILABLE = True
+except ImportError:
+    PYMODBUS_AVAILABLE = False
+    print("PyModbus nicht verfügbar - Demo-Modus wird verwendet")
+
+# PyQt6 Imports
 import pyqtgraph as pg
 from PyQt6 import QtWidgets, uic
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -54,168 +69,342 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from src.gui.stylesheet import get_dark_stylesheet  # Importiere das Stylesheet
-from src.utils.framework_helper import GuiLogger, WrappingFormatter  # Importiere den WrappingFormatter für Logs
+from src.gui.stylesheet import get_dark_stylesheet
+from src.utils.framework_helper import GuiLogger, WrappingFormatter
 
 # ===========================================================================================
 # KONFIGURATION - Alle wichtigen Parameter für den Torsionsprüfstand
 # ===========================================================================================
-# Diese Konstanten ersetzen das komplexe JSON-Parameter-System für einfache Konfiguration
 
-# Hardware-Konfiguration Messkarte
-FORCE_SCALE = 1.0  # Skalierungsfaktor für Kraftmessung [N/V]
-DISTANCE_SCALE = 1.0  # Skalierungsfaktor für Distanzmessung [mm/V]
-DAQ_CHANNEL_FORCE = "Dev1/ai0"  # DAQ-Kanal für Kraftmessung
-DAQ_CHANNEL_DISTANCE = "Dev1/ai1"  # DAQ-Kanal für Distanzmessung
+# DEMO-MODUS (True = Simulation ohne Hardware, False = Echte Hardware)
+DEMO_MODE = True
+
+# DF-30 Drehmoment-Sensor Konfiguration
+# Messbereich: ±20 Nm
+# Messverstärker Ausgang: ±10V
+TORQUE_SENSOR_MAX_NM = 20.0  # Maximales Drehmoment [Nm]
+TORQUE_SENSOR_MAX_VOLTAGE = 10.0  # Maximale Spannung [V]
+TORQUE_SCALE = TORQUE_SENSOR_MAX_NM / TORQUE_SENSOR_MAX_VOLTAGE  # 2.0 Nm/V
+
+# NI-6000 DAQ-Konfiguration
+DAQ_CHANNEL_TORQUE = "Dev1/ai0"  # DAQ-Kanal für Drehmomentmessung
+DAQ_VOLTAGE_RANGE = 10.0  # ±10V Messbereich
 
 # Mess-Konfiguration
 MEASUREMENT_INTERVAL = 100  # Messintervall in Millisekunden (10 Hz = 100ms)
 DEFAULT_SAMPLE_NAME = "TorsionTest"  # Standard-Probenname
 
-# Motor-Konfiguration (für zukünftige Erweiterung)
-MOTOR_TYPE = "UNKNOWN"  # "STEPPER", "SERVO", "DC" oder "UNKNOWN"
-MOTOR_ENABLED = False  # Motor-Steuerung aktiviert (noch nicht implementiert)
+# N5 Nanotec Schrittmotor-Konfiguration
+N5_IP_ADDRESS = "192.168.0.100"  # IP-Adresse des N5 Controllers
+N5_MODBUS_PORT = 502  # Standard Modbus TCP Port
+N5_SLAVE_ID = 1  # Modbus Slave ID
+MOTOR_TYPE = "N5_NANOTEC"  # Motor-Typ
+MOTOR_ENABLED = True  # Motor-Steuerung aktiviert
+
+# Motor-Parameter (Standardwerte)
+DEFAULT_MAX_ANGLE = 360.0  # Standard maximaler Winkel [Grad]
+DEFAULT_MAX_TORQUE = 15.0  # Standard maximales Drehmoment [Nm]
+DEFAULT_MAX_VELOCITY = 10.0  # Standard Geschwindigkeit [Grad/s] (+ = Uhrzeiger, - = Gegen Uhrzeiger)
 
 # GUI-Konfiguration
-SYSTEM_NAME = "Torsions Test Stand"
+SYSTEM_NAME = "Torsions Test Stand - DF-30 Sensor"
 
 # ===========================================================================================
 
 
-class MotorController:
+class N5NanotecController:
     """
-    Abstrakte Motorsteuerung für den Torsionsprüfstand.
-    Kann für verschiedene Motortypen erweitert werden (Stepper, Servo, DC).
+    N5 Nanotec Stepper Motor Controller via Modbus TCP.
+    Closed-Loop Position Control mit Positionsabfrage.
     """
 
-    def __init__(self, motor_type: str = MOTOR_TYPE):
+    def __init__(self, ip_address: str = N5_IP_ADDRESS, port: int = N5_MODBUS_PORT, slave_id: int = N5_SLAVE_ID, demo_mode: bool = DEMO_MODE):
         """
-        Initialisiert den Motor-Controller.
+        Initialisiert den N5 Nanotec Controller.
 
         Args:
-            motor_type (str): Typ des Motors ("STEPPER", "SERVO", "DC", "UNKNOWN")
+            ip_address (str): IP-Adresse des N5 Controllers
+            port (int): Modbus TCP Port
+            slave_id (int): Modbus Slave ID
+            demo_mode (bool): Demo-Modus für Simulation
         """
-        self.motor_type = motor_type
+        self.ip_address = ip_address
+        self.port = port
+        self.slave_id = slave_id
+        self.demo_mode = demo_mode
         self.is_connected = False
-        self.is_enabled = MOTOR_ENABLED
+        self.client = None
+
+        # Position und Bewegung
         self.current_position = 0.0  # Aktuelle Position in Grad
         self.target_position = 0.0  # Zielposition in Grad
+        self.is_moving = False  # Bewegungsstatus
+        self.velocity = 0.0  # Geschwindigkeit in Grad/s
+
+        # Demo-Mode Simulation
+        self.demo_start_time = None
+        self.demo_start_position = 0.0
 
     def connect(self) -> bool:
-        """
-        Verbindet mit dem Motor.
-        Muss in der konkreten Implementierung überschrieben werden.
-        """
-        if not self.is_enabled:
-            print("Motor-Steuerung ist deaktiviert (MOTOR_ENABLED = False)")
+        """Verbindet mit dem N5 Controller."""
+        if self.demo_mode:
+            print("[DEMO] N5 Nanotec Controller - Simulation aktiv")
+            self.is_connected = True
+            self.current_position = 0.0
+            return True
+
+        if not PYMODBUS_AVAILABLE:
+            print("PyModbus nicht verfügbar - N5 Steuerung nicht möglich")
             return False
 
-        if self.motor_type == "UNKNOWN":
-            print("Motor-Typ noch nicht definiert - Implementierung erforderlich")
+        try:
+            self.client = ModbusTcpClient(self.ip_address, port=self.port)
+            connection = self.client.connect()
+            if connection:
+                self.is_connected = True
+                print(f"N5 Nanotec verbunden: {self.ip_address}:{self.port}")
+                return True
+            else:
+                print(f"N5 Nanotec Verbindung fehlgeschlagen: {self.ip_address}:{self.port}")
+                return False
+        except Exception as e:
+            print(f"N5 Nanotec Verbindungsfehler: {e}")
             return False
-
-        # Hier würde die konkrete Motor-Verbindung implementiert
-        print(f"Motor-Controller ({self.motor_type}) - Simulation aktiv")
-        self.is_connected = True
-        return True
 
     def disconnect(self) -> None:
-        """Trennt die Verbindung zum Motor."""
-        self.is_connected = False
-        print("Motor-Controller getrennt")
+        """Trennt die Verbindung zum N5 Controller."""
+        if self.demo_mode:
+            self.is_connected = False
+            return
 
-    def move_to_position(self, position_degrees: float) -> bool:
+        if self.client and self.is_connected:
+            self.client.close()
+            self.is_connected = False
+            print("N5 Nanotec getrennt")
+
+    def home_position(self) -> bool:
+        """Fährt den Motor in die Home-Position (0°)."""
+        if not self.is_connected:
+            print("N5 nicht verbunden")
+            return False
+
+        if self.demo_mode:
+            print("[DEMO] N5 fährt in Home-Position (0°)")
+            self.current_position = 0.0
+            self.target_position = 0.0
+            self.is_moving = False
+            return True
+
+        # Hier würde der echte Modbus-Befehl kommen
+        # Beispiel: self.client.write_register(address, value, unit=self.slave_id)
+        self.target_position = 0.0
+        self.current_position = 0.0
+        return True
+
+    def move_continuous(self, velocity: float) -> bool:
         """
-        Bewegt den Motor zu einer bestimmten Position.
+        Startet kontinuierliche Bewegung mit gegebener Geschwindigkeit.
 
         Args:
-            position_degrees (float): Zielposition in Grad
+            velocity (float): Geschwindigkeit in Grad/s (+ = Uhrzeiger, - = Gegen Uhrzeiger)
 
         Returns:
             bool: True wenn erfolgreich
         """
         if not self.is_connected:
-            print("Motor nicht verbunden")
+            print("N5 nicht verbunden")
             return False
 
-        self.target_position = position_degrees
-        # Hier würde die konkrete Motor-Bewegung implementiert
-        print(f"Motor bewegt sich zu Position: {position_degrees}°")
-        self.current_position = position_degrees  # Simulation
+        self.velocity = velocity
+        self.is_moving = True
+
+        if self.demo_mode:
+            self.demo_start_time = time.time()
+            self.demo_start_position = self.current_position
+            print(f"[DEMO] N5 startet Bewegung mit {velocity:.2f}°/s")
+            return True
+
+        # Hier würde der echte Modbus-Befehl für kontinuierliche Bewegung kommen
         return True
 
-    def get_current_position(self) -> float:
-        """Gibt die aktuelle Motor-Position zurück."""
+    def stop_movement(self) -> bool:
+        """Stoppt die aktuelle Bewegung sofort."""
+        if not self.is_connected:
+            return False
+
+        self.is_moving = False
+        self.velocity = 0.0
+
+        if self.demo_mode:
+            print(f"[DEMO] N5 gestoppt bei Position {self.current_position:.2f}°")
+            return True
+
+        # Hier würde der echte Modbus-Stop-Befehl kommen
+        return True
+
+    def get_position(self) -> float:
+        """
+        Liest die aktuelle Position vom N5 Controller (Closed-Loop).
+
+        Returns:
+            float: Aktuelle Position in Grad
+        """
+        if not self.is_connected:
+            return 0.0
+
+        if self.demo_mode:
+            # Simuliere Bewegung basierend auf Geschwindigkeit und Zeit
+            if self.is_moving and self.demo_start_time is not None:
+                elapsed_time = time.time() - self.demo_start_time
+                self.current_position = self.demo_start_position + (self.velocity * elapsed_time)
+            return self.current_position
+
+        # Hier würde die echte Positionsabfrage via Modbus kommen
+        # Beispiel: result = self.client.read_holding_registers(address, count=1, unit=self.slave_id)
         return self.current_position
+
+
+class DemoHardwareSimulator:
+    """
+    Demo-Hardware-Simulator für Tests ohne echte Hardware.
+    Simuliert DF-30 Sensor und N5 Nanotec Motor.
+    """
+
+    def __init__(self):
+        self.torque_offset = 0.0  # Torque-Nullpunkt nach Kalibrierung
+        self.current_angle = 0.0  # Aktueller Winkel
+        self.is_running = False
+        self.start_time = None
+
+    def get_simulated_torque(self, angle: float) -> float:
+        """
+        Simuliert Drehmoment basierend auf Winkel.
+        Einfaches lineares Modell: Torque steigt mit Winkel.
+
+        Args:
+            angle (float): Aktueller Winkel in Grad
+
+        Returns:
+            float: Simuliertes Drehmoment in Nm
+        """
+        # Simuliere elastisches Torsionsverhalten
+        # Drehmoment steigt linear mit Winkel, plus kleines Rauschen
+        base_torque = angle * 0.05  # 0.05 Nm pro Grad
+        noise = random.uniform(-0.1, 0.1)  # Kleines Rauschen
+        torque = base_torque + noise + self.torque_offset
+
+        # Begrenze auf ±20 Nm (DF-30 Sensor Bereich)
+        torque = max(-20.0, min(20.0, torque))
+        return torque
+
+    def get_simulated_voltage(self, torque: float) -> float:
+        """
+        Konvertiert Drehmoment zu Spannung (Messverstärker-Ausgang).
+
+        Args:
+            torque (float): Drehmoment in Nm
+
+        Returns:
+            float: Spannung in V (±10V)
+        """
+        # ±20 Nm → ±10V
+        voltage = torque / TORQUE_SCALE
+        return voltage
+
+    def calibrate_zero(self) -> None:
+        """Kalibriert den Nullpunkt (aktuelles Drehmoment = 0)."""
+        current_torque = self.get_simulated_torque(self.current_angle)
+        self.torque_offset = -current_torque
+        print(f"[DEMO] Torque kalibriert (Offset: {self.torque_offset:.3f} Nm)")
 
 
 class DAQmxTask:
     """
-    Hardware-abstrakte Klasse für Datenerfassung.
-    Unterstützt NI DAQmx und kann für andere Messkarten erweitert werden.
+    Hardware-abstrakte Klasse für Datenerfassung mit NI-6000.
+    Unterstützt ±10V Messbereich für DF-30 Sensor.
     """
 
-    def __init__(self, force_channel="Dev1/ai0", distance_channel="Dev1/ai1"):
+    def __init__(self, torque_channel: str = DAQ_CHANNEL_TORQUE, demo_mode: bool = DEMO_MODE):
         """
-        Initialisiert eine DAQ Task für die Messung von Spannungen an den AI-Kanälen.
+        Initialisiert eine DAQ Task für die Messung von Drehmoment.
 
         Args:
-            force_channel (str): DAQ-Kanal für Kraftmessung (z.B. "Dev1/ai0")
-            distance_channel (str): DAQ-Kanal für Distanzmessung (z.B. "Dev1/ai1")
+            torque_channel (str): DAQ-Kanal für Drehmomentmessung (z.B. "Dev1/ai0")
+            demo_mode (bool): Demo-Modus für Simulation
         """
         self.nidaqmx_task = None
-        self.force_channel = force_channel
-        self.distance_channel = distance_channel
-        self.channel_names = [force_channel, distance_channel]
+        self.torque_channel = torque_channel
+        self.demo_mode = demo_mode
         self.is_task_created = False
+        self.demo_simulator = DemoHardwareSimulator() if demo_mode else None
 
     def create_nidaqmx_task(self):
         """
-        Erzeugt eine NI DAQmx Task für die konfigurierten AI-Kanäle.
-        Falls NI DAQmx nicht verfügbar ist, wird eine Warnung ausgegeben.
+        Erzeugt eine NI DAQmx Task für den konfigurierten AI-Kanal.
         """
+        if self.demo_mode:
+            print("[DEMO] NI-6000 DAQ - Simulation aktiv")
+            self.is_task_created = True
+            return
+
         if not NIDAQMX_AVAILABLE:
-            print("NI DAQmx nicht verfügbar - Simulation oder alternative Hardware erforderlich")
-            # Hier könnte eine andere Messkarten-Implementierung eingesetzt werden
+            print("NI DAQmx nicht verfügbar - Demo-Modus erforderlich")
             self.is_task_created = False
             return
 
         try:
             task = nidaqmx.Task()
-            # Force-Kanal hinzufügen
-            task.ai_channels.add_ai_voltage_chan(self.force_channel, terminal_config=TerminalConfiguration.DEFAULT)
-            # Distance-Kanal hinzufügen
-            task.ai_channels.add_ai_voltage_chan(self.distance_channel, terminal_config=TerminalConfiguration.DEFAULT)
+            # Torque-Kanal mit ±10V Range hinzufügen
+            task.ai_channels.add_ai_voltage_chan(
+                self.torque_channel, terminal_config=TerminalConfiguration.DEFAULT, min_val=-DAQ_VOLTAGE_RANGE, max_val=DAQ_VOLTAGE_RANGE
+            )
             self.nidaqmx_task = task
             self.is_task_created = True
-            print(f"NIDAQmx task created successfully with channels: {self.force_channel}, {self.distance_channel}")
+            print(f"NIDAQmx task erstellt: {self.torque_channel} (±{DAQ_VOLTAGE_RANGE}V)")
         except Exception as e:
-            print(f"Error creating NIDAQmx task: {e}")
+            print(f"Fehler beim Erstellen der NIDAQmx task: {e}")
             self.is_task_created = False
 
-    def read_task_voltages(self) -> tuple[float, float]:
+    def read_torque_voltage(self, current_angle: float = 0.0) -> float:
         """
-        Liest eine Probe von den Kanaelen ai0 und ai1 aus der uebergebenen Task
-        und gibt beide Spannungen als Tupel zurueck.
+        Liest die Spannung vom Drehmoment-Sensor.
+
+        Args:
+            current_angle (float): Aktueller Winkel für Demo-Simulation
+
+        Returns:
+            float: Spannung in V
         """
+        if self.demo_mode:
+            # Demo-Modus: Simuliere Spannung basierend auf Winkel
+            torque = self.demo_simulator.get_simulated_torque(current_angle)
+            voltage = self.demo_simulator.get_simulated_voltage(torque)
+            return voltage
+
         task = self.nidaqmx_task
         if task is None:
             raise RuntimeError("Task ist nicht initialisiert")
-        # liefert eine Liste mit zwei Werten [ai0, ai1]
+
+        # Echte Hardware: Lese Spannung von DAQ
         values = task.read(number_of_samples_per_channel=1)
-        # NIDAQmx gibt verschachtelte Listen zurück: [[wert1], [wert2]]
-        if isinstance(values, list) and len(values) >= 2:
-            # Extrahiere die Werte aus den verschachtelten Listen
-            force_volt = float(values[0][0]) if isinstance(values[0], list) else float(values[0])
-            distance_volt = float(values[1][0]) if isinstance(values[1], list) else float(values[1])
-            return force_volt, distance_volt
+        if isinstance(values, list):
+            return float(values[0])
         else:
-            raise RuntimeError(f"Unexpected DAQmx read result: {values}")
+            return float(values)
+
+    def calibrate_zero(self) -> None:
+        """Kalibriert den Nullpunkt des Sensors."""
+        if self.demo_mode and self.demo_simulator:
+            self.demo_simulator.calibrate_zero()
 
     def close_nidaqmx_task(self) -> None:
         """
         Schliesst die Task und gibt alle Ressourcen frei.
         """
+        if self.demo_mode:
+            self.is_task_created = False
+            return
+
         task = self.nidaqmx_task
         if task is None:
             return
@@ -226,7 +415,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         # --- Basisverzeichnisse und GUI laden ---
-        self.base_dir = os.getcwd()  # Projektbasisverzeichnis
+        self.base_dir = os.getcwd()
         ui_file = r"src/gui/torsions_test_stand.ui"
         uic.loadUi(ui_file, self)
 
@@ -235,65 +424,76 @@ class MainWindow(QMainWindow):
 
         # --- Fenster konfigurieren ---
         self.move(self.screen().geometry().center() - self.frameGeometry().center())
-        # Verwende Konstanten für Fenstertitel und Systemname
         self.setWindowTitle(SYSTEM_NAME)
         self.labelSystemName.setText(SYSTEM_NAME)
+
         # Initialisiere Klassenvariablen
         self.init_class_attributes()
+
         # --- Logger initialisieren ---
         self.setup_Logger()
         self.logger.info("Application started")
+        self.logger.info(f"Demo-Modus: {'AKTIV' if DEMO_MODE else 'INAKTIV'}")
+
         # --- GUI-Elemente und Events verbinden ---
         self.connectEvents()
+
         # --- Graph Widget initialisieren ---
-        self.setup_force_graph_widget()
-        # --- Einfache Parameter-Initialisierung (ersetzt load_default_parameters) ---
-        self.init_simple_parameters()
+        self.setup_torque_graph_widget()
+
+        # --- Parameter initialisieren ---
+        self.init_parameters()
 
     def init_class_attributes(self) -> None:
         """
         Initialisiert alle Klassenvariablen für den Torsionsprüfstand.
-        Verwendet einfache Werte statt komplexer Parameter-Strukturen.
         """
-        # boolsche Flags für Programmzustand
+        # Flags für Programmzustand
         self.block_parameter_signals = False
         self.grp_box_connected = False
-        self.is_process_running = False  # Flag, ob der Messprozess läuft
-        self.are_instruments_initialized = False  # Flag, ob die Hardware initialisiert ist
+        self.is_process_running = False  # Messung läuft
+        self.are_instruments_initialized = False  # Hardware initialisiert
 
-        # Sample-Name aus Konstanten initialisieren
+        # Sample-Name
         self.sample_name = DEFAULT_SAMPLE_NAME
 
         # Dateipfade für Messdaten
-        self.project_dir: str = ""  # Projektverzeichnis (wird vom Benutzer gewählt)
-        self.measurement_dir: str = ""  # Speicherort für aktuelle Messung
-        self.measurement_filename: str = ""  # Name der aktuellen Messdatei
+        self.project_dir: str = ""
+        self.measurement_dir: str = ""
+        self.measurement_filename: str = ""
 
         # Hardware-Objekte
-        self.nidaqmx_task: DAQmxTask = None  # DAQ Task für Hardwarezugriff
-        self.motor_controller: MotorController = None  # Motor-Controller für Torsionsantrieb
-        self.measurement_timer = None  # Timer für die Messung
+        self.nidaqmx_task: DAQmxTask = None
+        self.motor_controller: N5NanotecController = None
+        self.measurement_timer: QTimer = None
 
-        # Zeitmessung für Messungen
-        self.start_time_timestamp = None  # Startzeit für verstrichene Zeit
+        # Zeitmessung
+        self.start_time_timestamp = None
 
-        # Graph-Daten für Force vs. Distance Plot
-        self.force_data = []  # Liste für Force-Werte in N
-        self.distance_data = []  # Liste für Distance-Werte in mm
+        # Graph-Daten für Torque vs. Angle Plot
+        self.torque_data = []  # Liste für Torque-Werte in Nm
+        self.angle_data = []  # Liste für Angle-Werte in Grad
 
     def closeEvent(self, event) -> None:
-        self.logger.info("HTS-Sigma 2 closed")
-        # Stoppe NIDAQmx Task
-        if hasattr(self, "daqmx_task") and self.daqmx_task:
-            self.logger.info("Closing NIDAQmx Task")
-            self.nidaqmx_task.close_nidaqmx_task()
+        """Wird beim Schließen des Fensters aufgerufen."""
+        self.logger.info("Torsions Test Stand wird geschlossen")
+
+        # Stoppe laufende Messung
+        if self.is_process_running:
+            self.stop_measurement()
+
+        # Deaktiviere Hardware
+        if self.are_instruments_initialized:
+            self.deactivate_hardware()
+
         super().closeEvent(event)
 
     def connectEvents(self) -> None:
+        """Verbindet alle Button-Events mit ihren Funktionen."""
         self.btn_select_proj_folder.clicked.connect(self.select_project_directory)
         self.start_meas_btn.clicked.connect(self.start_measurement)
         self.stop_meas_btn.clicked.connect(self.stop_measurement)
-        self.manual_trig_btn.clicked.connect(self.measure_daqmx)
+        self.manual_trig_btn.clicked.connect(self.measure_manual)
         self.activate_hardware_btn.clicked.connect(self.activate_hardware)
         self.deactivate_hardware_btn.clicked.connect(self.deactivate_hardware)
         self.home_pos_btn.clicked.connect(self.home_position)
@@ -302,10 +502,10 @@ class MainWindow(QMainWindow):
 
     def connect_groupbox_signals(self) -> None:
         """Verbindet alle relevanten Widgets in GroupBoxen mit Überwachungsfunktionen."""
-        for group_box in self.findChildren(QGroupBox):  # Sucht alle GroupBoxen im Hauptfenster
+        for group_box in self.findChildren(QGroupBox):
             # QLineEdit: Signale verbinden
             for line_edit in group_box.findChildren(QLineEdit):
-                line_edit.old_text = line_edit.text()  # Speichere den ursprünglichen Text in ein __dict__ attribute
+                line_edit.old_text = line_edit.text()
                 line_edit.editingFinished.connect(lambda le=line_edit: self.check_parameter_change(le))
             # QComboBox: Signale verbinden
             for combo_box in group_box.findChildren(QComboBox):
@@ -316,18 +516,9 @@ class MainWindow(QMainWindow):
 
     def safe_float(self, text: str, default: float = 0.0) -> float:
         """
-        Sichere Konvertierung von String zu Float für Messgeräte.
-        Behandelt deutsche Dezimalkommas und ungültige Eingaben.
-
-        Args:
-            text (str): Der zu konvertierende Text
-            default (float): Standardwert bei Fehlern
-
-        Returns:
-            float: Konvertierter Wert oder Standardwert
+        Sichere Konvertierung von String zu Float.
         """
         try:
-            # Deutsche Kommas in Punkte umwandeln
             clean_text = text.strip().replace(",", ".")
             return float(clean_text)
         except (ValueError, TypeError):
@@ -336,557 +527,502 @@ class MainWindow(QMainWindow):
 
     def safe_int(self, text: str, default: int = 0) -> int:
         """
-        Sichere Konvertierung von String zu Integer für Einstellungen.
-        Behandelt deutsche Dezimalkommas und ungültige Eingaben.
-
-        Args:
-            text (str): Der zu konvertierende Text
-            default (int): Standardwert bei Fehlern
-
-        Returns:
-            int: Konvertierter Wert oder Standardwert
+        Sichere Konvertierung von String zu Integer.
         """
         try:
-            # Deutsche Kommas in Punkte umwandeln, dann über float zu int
             clean_text = text.strip().replace(",", ".")
-            return int(float(clean_text))  # Über float für Dezimalzahlen-Eingaben
+            return int(float(clean_text))
         except (ValueError, TypeError):
             self.logger.warning(f"Konvertierung zu Integer fehlgeschlagen: '{text}' -> Standard: {default}")
             return default
 
     def check_parameter_change(self, source):
         """
-        Vereinfachte Eingabeverarbeitung für QLineEdit-Felder.
-        Für einen Techniker-Torsionsprüfstand - einfach und robust.
-
-        Args:
-            source: Das QLineEdit-Widget, das geändert wurde
+        Eingabeverarbeitung für QLineEdit-Felder.
         """
         if not isinstance(source, QtWidgets.QLineEdit):
             return
 
-        # Grundlegende Informationen für das Log
         sender_name = self.sender().objectName() if self.sender() else "Unknown"
         current_text = source.text().strip()
 
         self.logger.info(f"Parameter '{sender_name}' geändert zu: '{current_text}'")
 
-        # Sehr einfache Validierung: Nur prüfen ob leer, dann auf "0" setzen
+        # Validierung: Leer = "0"
         if not current_text:
             source.setText("0")
             self.logger.info(f"Leeres Feld '{sender_name}' auf '0' gesetzt")
 
-        # Komma durch Punkt ersetzen für deutsche Eingaben
+        # Komma durch Punkt ersetzen
         if "," in current_text:
             corrected_text = current_text.replace(",", ".")
             source.setText(corrected_text)
             self.logger.info(f"Komma in '{sender_name}' durch Punkt ersetzt")
 
-        # Parameter-Update triggern (einfach)
         self.accept_parameter()
 
     def setup_Logger(self) -> None:
         """
         Initialisiert den Logger nur für GUI-Anzeige.
-        Keine Datei-Speicherung - alles wird nur in der GUI angezeigt.
         """
-        # Logger erstellen
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)  # Einheitliches Logging-Level
+        root_logger.setLevel(logging.INFO)
 
-        # Formatter für GUI-Anzeige definieren
         formatter = WrappingFormatter("%(asctime)-32.24s  %(levelname)-16.16s %(name)-16.16s %(message)s")
 
-        # Nur GUI-Handler (keine Datei-Speicherung)
         self.gui_handler = GuiLogger()
         self.gui_handler.logger_signal.connect(self.msg)
         self.gui_handler.setLevel(logging.INFO)
         self.gui_handler.setFormatter(formatter)
         root_logger.addHandler(self.gui_handler)
 
-        # Logger für diese Klasse erstellen
         self.logger = logging.getLogger("MAIN")
-        self.logger.info("Logger initialized - GUI only (keine Datei-Speicherung)")
+        self.logger.info("Logger initialized")
 
     def msg(self, msg="No message included", level=logging.INFO, name="Unknown") -> None:
-        # Farben je nach Log-Level setzen
+        """Zeigt Nachrichten im Log-Bereich an."""
+        # Farben je nach Log-Level
         if level == logging.DEBUG:
-            color = "blue"  # Mildes Blau für DEBUG
+            color = "blue"
         elif level == logging.INFO:
-            color = "white"  # Weiß für INFO
+            color = "white"
         elif level == logging.WARNING:
-            color = "#E6CF6A"  # Mildes Orange für WARNUNG
+            color = "#E6CF6A"
         elif level == logging.ERROR:
-            color = "#FF5555"  # Helles Rot für FEHLER (besser lesbar auf dunklem Hintergrund)
+            color = "#FF5555"
         elif level == logging.CRITICAL:
-            color = "purple"  # Lila für KRITISCH
+            color = "purple"
         else:
-            color = "black"  # Standardfarbe
-        # Farbe und Stil anwenden
+            color = "black"
 
         self.plainLog.setTextColor(QColor(color))
         self.plainLog.setFontWeight(QFont.Weight.Bold if level >= logging.WARNING else QFont.Weight.Normal)
-        # Nachricht anzeigen
         self.plainLog.append(msg)
         self.plainLog.moveCursor(QTextCursor.MoveOperation.End)
 
-    def setup_force_graph_widget(self):
-        """Embed a PyQtGraph for Force vs. Displacement (N vs. mm) plot."""
+    def setup_torque_graph_widget(self):
+        """Erstellt PyQtGraph für Torque vs. Angle Plot."""
         graph_layout = QVBoxLayout(self.force_graph_frame)
         self.graph_widget = pg.PlotWidget()
-        # Configure axes
-        self.graph_widget.setLabel("left", "Force", units="N", color="white", **{"font-size": "10pt"})
-        self.graph_widget.setLabel("bottom", "Displacement", units="mm", color="white", **{"font-size": "10pt"})
+
+        # Achsen konfigurieren
+        self.graph_widget.setLabel("left", "Torque", units="Nm", color="white", **{"font-size": "10pt"})
+        self.graph_widget.setLabel("bottom", "Angle", units="°", color="white", **{"font-size": "10pt"})
         self.graph_widget.setBackground("#262a32")
         self.graph_widget.showGrid(x=True, y=True)
-        # Only one curve for Force vs. Displacement
-        self.force_curve = self.graph_widget.plot(
-            pen=pg.mkPen(color="#0077FF", width=2), symbol="o", symbolBrush="#0077FF", symbolSize=4, name="Force vs. Displacement"
+
+        # Kurve für Torque vs. Angle
+        self.torque_curve = self.graph_widget.plot(
+            pen=pg.mkPen(color="#0077FF", width=2), symbol="o", symbolBrush="#0077FF", symbolSize=4, name="Torque vs. Angle"
         )
-        # Axis styling
+
+        # Achsen-Styling
         self.graph_widget.getAxis("left").setStyle(tickFont=QFont("Arial", 10))
         self.graph_widget.getAxis("bottom").setStyle(tickFont=QFont("Arial", 10))
         self.graph_widget.getAxis("left").setTextPen("w")
         self.graph_widget.getAxis("bottom").setTextPen("w")
+
         graph_layout.addWidget(self.graph_widget)
 
-    # ----------Business Logic-------------------
+    # ---------- Parameter Funktionen ----------
 
-    def init_simple_parameters(self) -> None:
+    def init_parameters(self) -> None:
         """
-        Einfache Parameter-Initialisierung mit Konstanten.
-        Ersetzt das komplexe JSON-Parameter-System.
+        Parameter-Initialisierung mit Standardwerten.
         """
         # Sample-Name setzen
         self.smp_name.setText(self.sample_name)
 
-        # Max-Werte auf 0 initialisieren (GUI-Elemente vorhanden)
-        self.max_angle.setText("0")
-        self.max_torque.setText("0")
-        self.max_velocity.setText("0")
+        # Max-Werte initialisieren
+        self.max_angle.setText(str(DEFAULT_MAX_ANGLE))
+        self.max_torque.setText(str(DEFAULT_MAX_TORQUE))
+        self.max_velocity.setText(str(DEFAULT_MAX_VELOCITY))
 
-        # GUI-Signale verbinden (falls noch nicht geschehen)
+        # GUI-Signale verbinden
         if not self.grp_box_connected:
             self.connect_groupbox_signals()
 
-        self.logger.info("Parameter mit Konstanten initialisiert (JSON-System ersetzt)")
+        self.logger.info("Parameter mit Standardwerten initialisiert")
 
-    def get_current_force_scale(self) -> float:
-        """Gibt den Force-Scale-Wert aus den Konstanten zurück."""
-        return FORCE_SCALE
+    def get_max_angle(self) -> float:
+        """Liest den Max Angle Wert aus der GUI."""
+        return self.safe_float(self.max_angle.text(), DEFAULT_MAX_ANGLE)
 
-    def get_current_distance_scale(self) -> float:
-        """Gibt den Distance-Scale-Wert aus den Konstanten zurück."""
-        return DISTANCE_SCALE
+    def get_max_torque(self) -> float:
+        """Liest den Max Torque Wert aus der GUI."""
+        return self.safe_float(self.max_torque.text(), DEFAULT_MAX_TORQUE)
 
-    def get_current_force_channel(self) -> str:
-        """Gibt den Force-Kanal aus den Konstanten zurück."""
-        return DAQ_CHANNEL_FORCE
-
-    def get_current_distance_channel(self) -> str:
-        """Gibt den Distance-Kanal aus den Konstanten zurück."""
-        return DAQ_CHANNEL_DISTANCE
-
-    def get_current_interval(self) -> int:
-        """Gibt das Messintervall aus den Konstanten zurück."""
-        return MEASUREMENT_INTERVAL
+    def get_max_velocity(self) -> float:
+        """Liest den Max Velocity Wert aus der GUI."""
+        return self.safe_float(self.max_velocity.text(), DEFAULT_MAX_VELOCITY)
 
     def accept_parameter(self) -> None:
-        """
-        Vereinfachte Parameter-Akzeptierung ohne JSON-Speicherung.
-        Werte werden nur in lokalen Variablen gespeichert.
-        """
+        """Parameter-Akzeptierung."""
         if getattr(self, "block_parameter_signals", False):
-            return  # Während des Ladens nichts tun
-
-        # Lokale Werte aktualisieren (kein komplexes Parameter-System mehr)
-        # Die Werte werden direkt aus der GUI gelesen, wenn sie benötigt werden
-        self.logger.debug("Parameter akzeptiert (vereinfachtes System)")
+            return
+        self.logger.debug("Parameter akzeptiert")
 
     def update_sample_name(self) -> None:
-        """
-        Aktualisiert den Sample-Namen (vereinfacht, ohne Parameter-Speicherung).
-        """
+        """Aktualisiert den Sample-Namen."""
         if not self.is_process_running:
             self.sample_name = self.smp_name.text().strip()
             self.logger.info(f"Sample-Name aktualisiert: {self.sample_name}")
 
-            if self.project_dir:
-                self.update_measurement_directory()
-
     def select_project_directory(self) -> None:
-        """
-        Ordnerauswahl für Projektverzeichnis (vereinfacht ohne Parameter-System).
-        """
+        """Ordnerauswahl für Projektverzeichnis."""
         dialog = QFileDialog()
         options = dialog.options()
 
-        # Standard-Startpfad für die Suche festlegen
-        if self.project_dir:
-            start_path = self.project_dir
-        else:
-            start_path = os.getcwd()  # Aktuelles Arbeitsverzeichnis als Fallback
-
-        # Ordner auswählen statt Datei speichern
+        start_path = self.project_dir if self.project_dir else os.getcwd()
         folder = QFileDialog.getExistingDirectory(self, "Select Project Directory", start_path, options=options)
 
         if folder:
             self.project_dir = folder
             self.proj_dir.setText(self.project_dir)
-            self.logger.info(f"Project directory '{self.project_dir}' selected")
-
-            # Festplattenspeicher bei Projekt-Ordner-Auswahl aktualisieren (falls Funktion existiert)
-            if hasattr(self, "update_disk_space_display"):
-                self.update_disk_space_display()
-
-            if self.sample_name:
-                # Wenn ein Sample-Name gesetzt ist, aktualisiere das Messverzeichnis
-                self.update_measurement_directory()
+            self.logger.info(f"Projektverzeichnis ausgewählt: {self.project_dir}")
         else:
-            self.logger.warning("No project directory selected")
-
-    def setup_measurement_timer(self) -> None:
-        """
-        Initialisiert und startet den Measurement Timer.
-        """
-        from PyQt6.QtCore import QTimer
-
-        if self.measurement_timer is not None:
-            self.measurement_timer.stop()
-
-        self.measurement_timer = QTimer()
-        self.measurement_timer.timeout.connect(self.measure)
-        # Verwende das Intervall aus der GUI
-        interval_ms = self.get_current_interval()
-        self.measurement_timer.start(interval_ms)
-        self.logger.info(f"Measurement timer started with interval: {interval_ms}ms")
-
-    def update_measurement_directory(self) -> None:
-        """
-        Aktualisiert das Messverzeichnis basierend auf Projektpfad und Sample-Name.
-        Da meas_dir GUI-Element entfernt wurde, wird nur noch geloggt.
-        """
-        proj_dir = self.project_dir
-        sample_name = self.sample_name.strip()
-        measurement_dir = os.path.join(proj_dir, sample_name)
-        if measurement_dir:
-            self.logger.info(f"Measurement directory updated to: {measurement_dir}")
-
-    # --- Instrument Funktionen ---
+            self.logger.warning("Kein Projektverzeichnis ausgewählt")
 
     def set_setup_controls_enabled(self, enabled: bool):
         """
-        Aktiviert oder deaktiviert alle Setup-Eingabefelder und -Buttons.
-        Während einer Messung sollen nur Stop und Photo Crawler verfügbar sein.
-
-        Args:
-            enabled (bool): True = Aktivieren, False = Deaktivieren
+        Aktiviert oder deaktiviert Setup-Eingabefelder.
         """
         try:
-            # Setup GroupBox und alle darin enthaltenen Widgets
             setup_widgets = []
 
-            # Suche nach allen GroupBoxen, die "Setup" im Namen haben
+            # Suche GroupBoxen mit "setup" im Namen
             for group_box in self.findChildren(QGroupBox):
                 if "setup" in group_box.objectName().lower() or "Setup" in group_box.title():
                     setup_widgets.append(group_box)
-                    # Alle Kinder-Widgets der GroupBox hinzufügen
                     for widget in group_box.findChildren(QtWidgets.QWidget):
                         setup_widgets.append(widget)
 
-            # Spezifische Buttons und Eingabefelder
+            # Spezifische Widgets
             control_widgets = [
-                # Parameter-Eingabefelder
                 getattr(self, "max_angle", None),
                 getattr(self, "max_torque", None),
                 getattr(self, "max_velocity", None),
-                # Buttons
                 getattr(self, "btn_select_proj_folder", None),
                 getattr(self, "start_meas_btn", None),
                 getattr(self, "manual_trig_btn", None),
                 getattr(self, "activate_hardware_btn", None),
                 getattr(self, "deactivate_hardware_btn", None),
                 getattr(self, "home_pos_btn", None),
-                # Sample Name Eingabe
                 getattr(self, "smp_name", None),
             ]
 
-            # Alle Setup-Widgets deaktivieren/aktivieren
             all_widgets = setup_widgets + control_widgets
             for widget in all_widgets:
                 if widget is not None:
                     widget.setEnabled(enabled)
 
-            # Stop Button und Photo Crawler immer verfügbar lassen
+            # Stop Button immer verfügbar
             if hasattr(self, "stop_meas_btn"):
                 self.stop_meas_btn.setEnabled(True)
 
             action_text = "enabled" if enabled else "disabled"
-            self.logger.info(f"Setup controls {action_text} (measurement running: {not enabled})")
+            self.logger.info(f"Setup controls {action_text}")
 
         except Exception as e:
-            self.logger.error(f"Error setting setup controls enabled state: {e}")
+            self.logger.error(f"Fehler beim Setzen der Control-Zustände: {e}")
 
     def reset_graph_data(self):
-        """
-        Setzt die Graph-Daten zurück (z.B. bei neuer Messung).
-        """
-        self.force_data = []
-        self.distance_data = []
-        # Graph leeren
-        if hasattr(self, "force_curve"):
-            self.force_curve.setData([], [])
-        self.logger.info("Graph data reset")
+        """Setzt die Graph-Daten zurück."""
+        self.torque_data = []
+        self.angle_data = []
+        if hasattr(self, "torque_curve"):
+            self.torque_curve.setData([], [])
+        self.logger.info("Graph-Daten zurückgesetzt")
 
-    def clear_graph_display(self):
-        """
-        Leert nur die Graph-Anzeige, ohne die Messung zu beeinflussen.
-        Nützlich für manuelle Graph-Zurücksetzung.
-        """
-        if hasattr(self, "force_curve"):
-            self.force_curve.clear()
-        self.logger.info("Graph display cleared")
-
-    def write_measurement_data(self, timestamp, force_volt, distance_volt, force_value, distance_value):
-        """
-        Schreibt Messdaten in die Messdatei.
-        Reihenfolge: Time, Voltage_Force, Voltage_Distance, Force, Distance
-        """
-        if not self.measurement_dir or not hasattr(self, "measurement_filename") or not self.measurement_filename:
-            return False
-
-        measurement_file = os.path.join(self.measurement_dir, self.measurement_filename)
-        try:
-            with open(measurement_file, "a", encoding="utf-8") as f:
-                # Datenzeile in der gewünschten Reihenfolge zusammenstellen
-                data_row = [
-                    timestamp,  # Time[HH:mm:ss]
-                    f"{force_volt:.6f}",  # Voltage_Force[V]
-                    f"{distance_volt:.6f}",  # Voltage_Distance[V]
-                    f"{force_value:.6f}",  # Force[N]
-                    f"{distance_value:.6f}",  # Distance[mm]
-                ]
-
-                f.write("\t".join(data_row) + "\n")
-            return True
-        except Exception as e:
-            self.logger.error(f"Error writing measurement data: {e}")
-            return False
-
-    def measure_daqmx(self) -> None:
-        """
-        Test-Funktion für manuelle DAQmx-Messung.
-        Liest die Spannungen von AI0 und AI1 und zeigt sie in der GUI an.
-        """
-        if self.is_process_running:
-            self.logger.warning("Measurement is currently running. Cannot take reference shot.")
-            return
-        if not self.are_instruments_initialized or not self.nidaqmx_task or not self.nidaqmx_task.is_task_created:
-            self.logger.warning("DAQmx Task not initialized or hardware not activated")
-            return
-        try:
-            # NIDAQmx Spannungen lesen
-            force_volt, distance_volt = self.nidaqmx_task.read_task_voltages()
-            self.logger.info(f"Manual DAQmx reading: Force={force_volt:.6f}V, Distance={distance_volt:.6f}V")
-
-            # Spannungen in physikalische Werte umrechnen (verwendet GUI-Werte)
-            force_value = force_volt * self.get_current_force_scale()
-            distance_value = distance_volt * self.get_current_distance_scale()
-
-            # GUI-Elemente aktualisieren (nur vorhandene Widgets)
-            self.force_meas.setText(f"{force_value:.6f}")
-            self.distance_meas.setText(f"{distance_value:.6f}")
-            self.dmm_voltage.setText(f"{force_volt:.6f}")
-
-            # Optional: Graph-Punkt hinzufügen (nur wenn keine Messung läuft)
-            if not self.is_process_running:
-                self.force_data.append(force_value)
-                self.distance_data.append(distance_value)
-                if hasattr(self, "force_curve"):
-                    self.force_curve.setData(self.distance_data, self.force_data)
-                self.logger.debug("Graph updated with manual measurement point")
-
-            self.logger.info(f"Manual measurement: Force={force_value:.6f}N, Distance={distance_value:.6f}mm")
-
-        except Exception as e:
-            self.logger.error(f"Error during manual DAQmx measurement: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to read DAQmx values:\n{e}")
-
-    def home_position(self) -> None:
-        """
-        Fährt den Motor in die Home-Position.
-        """
-        if not self.are_instruments_initialized:
-            self.logger.warning("Hardware not initialized. Please activate hardware first.")
-            return
-
-        if self.is_process_running:
-            self.logger.warning("Cannot home position while measurement is running.")
-            return
-
-        if self.motor_controller and self.motor_controller.is_connected:
-            self.logger.info("Moving motor to home position...")
-            if self.motor_controller.move_to_position(0.0):
-                self.logger.info("Motor homed successfully")
-            else:
-                self.logger.error("Failed to home motor")
-        else:
-            self.logger.warning("Motor controller not available")
-
-    # ----------Measurement-------------------
+    # ---------- Hardware Funktionen ----------
 
     def activate_hardware(self) -> None:
+        """Aktiviert die Hardware (NI-6000 und N5 Nanotec)."""
         if self.are_instruments_initialized:
-            self.logger.warning("Hardware already initialized")
+            self.logger.warning("Hardware bereits initialisiert")
             return
-        # Setze den Mauszeiger auf "Warten" (Busy)
+
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        self.logger.info("Activating hardware...")
+        self.logger.info("Aktiviere Hardware...")
 
-        # DAQmx Task mit den aktuellen GUI-Kanälen erstellen
-        force_channel = self.get_current_force_channel()
-        distance_channel = self.get_current_distance_channel()
-        self.logger.info(f"Initializing DAQmx with channels: Force={force_channel}, Distance={distance_channel}")
+        success = True
+        error_messages = []
 
-        self.nidaqmx_task = DAQmxTask(force_channel, distance_channel)  # Erstelle DAQmx Task mit konfigurierten Kanälen
-        self.nidaqmx_task.create_nidaqmx_task()
-        if self.nidaqmx_task.is_task_created:
-            self.logger.info("DAQmx Task created successfully")
-        else:
-            self.logger.error("Failed to create DAQmx Task")
-            QMessageBox.critical(self, "Error", "Failed to create DAQmx Task. Check your hardware connection.")
-            QtWidgets.QApplication.restoreOverrideCursor()
-            return
+        # --- NI-6000 DAQ aktivieren ---
+        try:
+            self.logger.info(f"Initialisiere NI-6000 DAQ (Kanal: {DAQ_CHANNEL_TORQUE})...")
+            self.nidaqmx_task = DAQmxTask(DAQ_CHANNEL_TORQUE, demo_mode=DEMO_MODE)
+            self.nidaqmx_task.create_nidaqmx_task()
 
-        # Motor-Controller initialisieren (falls aktiviert)
-        self.motor_controller = MotorController()
-        if self.motor_controller.connect():
-            self.logger.info(f"Motor-Controller ({self.motor_controller.motor_type}) initialized")
-        else:
-            self.logger.info("Motor-Controller nicht aktiviert oder nicht verfügbar")
-        self.are_instruments_initialized = True
+            if self.nidaqmx_task.is_task_created:
+                self.logger.info("✓ NI-6000 DAQ erfolgreich initialisiert")
+                self.nidaq_activ_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
+            else:
+                error_messages.append("NI-6000 DAQ konnte nicht initialisiert werden")
+                success = False
+                self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+        except Exception as e:
+            self.logger.error(f"✗ Fehler beim Initialisieren der NI-6000 DAQ: {e}")
+            error_messages.append(f"NI-6000 DAQ Fehler: {e}")
+            success = False
+            self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
-        # LED-Status aktualisieren (grün = aktiviert)
-        if self.nidaqmx_task and self.nidaqmx_task.is_task_created:
-            self.nidaq_activ_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
+        # --- N5 Nanotec Motor aktivieren ---
+        try:
+            self.logger.info(f"Initialisiere N5 Nanotec Controller (IP: {N5_IP_ADDRESS})...")
+            self.motor_controller = N5NanotecController(demo_mode=DEMO_MODE)
+
+            if self.motor_controller.connect():
+                self.logger.info("✓ N5 Nanotec Controller erfolgreich verbunden")
+                self.N5_contr_activ_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
+            else:
+                error_messages.append("N5 Nanotec Controller konnte nicht verbunden werden")
+                success = False
+                self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+        except Exception as e:
+            self.logger.error(f"✗ Fehler beim Verbinden des N5 Nanotec Controllers: {e}")
+            error_messages.append(f"N5 Nanotec Fehler: {e}")
+            success = False
+            self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
         QtWidgets.QApplication.restoreOverrideCursor()
 
+        if success:
+            self.are_instruments_initialized = True
+            self.logger.info("✓ Hardware erfolgreich aktiviert")
+            QMessageBox.information(self, "Erfolg", "Hardware erfolgreich aktiviert!\n\n✓ NI-6000 DAQ\n✓ N5 Nanotec Controller")
+        else:
+            self.are_instruments_initialized = False
+            error_text = "\n".join(error_messages)
+            self.logger.error(f"✗ Hardware-Aktivierung fehlgeschlagen:\n{error_text}")
+            QMessageBox.critical(self, "Fehler", f"Hardware-Aktivierung fehlgeschlagen:\n\n{error_text}")
+
     def deactivate_hardware(self) -> None:
-        """
-        Deaktiviert alle Hardware-Komponenten (DAQmx Task und Kameras).
-        """
+        """Deaktiviert alle Hardware-Komponenten."""
         if not self.are_instruments_initialized:
-            self.logger.warning("Hardware is not initialized")
+            self.logger.warning("Hardware ist nicht initialisiert")
             return
 
-        # Setze den Mauszeiger auf "Warten" (Busy)
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        self.logger.info("Deactivating hardware...")
+        self.logger.info("Deaktiviere Hardware...")
 
         # DAQmx Task schließen
         if hasattr(self, "nidaqmx_task") and self.nidaqmx_task:
-            self.logger.info("Closing DAQmx Task")
+            self.logger.info("Schließe NI-6000 DAQ Task")
             try:
                 self.nidaqmx_task.close_nidaqmx_task()
-                self.logger.info("DAQmx Task closed successfully")
+                self.logger.info("✓ NI-6000 DAQ Task geschlossen")
             except Exception as e:
-                self.logger.error(f"Error closing DAQmx Task: {e}")
+                self.logger.error(f"✗ Fehler beim Schließen der DAQ Task: {e}")
             self.nidaqmx_task = None
 
         # Motor-Controller trennen
         if hasattr(self, "motor_controller") and self.motor_controller:
-            self.logger.info("Disconnecting Motor Controller")
+            self.logger.info("Trenne N5 Nanotec Controller")
             try:
                 self.motor_controller.disconnect()
-                self.logger.info("Motor Controller disconnected successfully")
+                self.logger.info("✓ N5 Nanotec Controller getrennt")
             except Exception as e:
-                self.logger.error(f"Error disconnecting Motor Controller: {e}")
+                self.logger.error(f"✗ Fehler beim Trennen des Controllers: {e}")
             self.motor_controller = None
 
         # Flags zurücksetzen
         self.are_instruments_initialized = False
         self.is_process_running = False
 
-        # Setup-Steuerelemente wieder aktivieren (falls durch Messung deaktiviert)
+        # Setup-Steuerelemente wieder aktivieren
         self.set_setup_controls_enabled(True)
 
-        # LED-Status aktualisieren (rot = deaktiviert)
+        # LED-Status aktualisieren
         self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+        self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
         QtWidgets.QApplication.restoreOverrideCursor()
-        self.logger.info("Hardware deactivated successfully")
+        self.logger.info("✓ Hardware erfolgreich deaktiviert")
+
+    def home_position(self) -> None:
+        """Fährt den Motor in die Home-Position und kalibriert Nullpunkt."""
+        if not self.are_instruments_initialized:
+            self.logger.warning("Hardware nicht initialisiert. Bitte zuerst Hardware aktivieren.")
+            QMessageBox.warning(self, "Warnung", "Hardware nicht initialisiert.\nBitte zuerst 'Activate Hardware' drücken.")
+            return
+
+        if self.is_process_running:
+            self.logger.warning("Home Position nicht möglich während Messung läuft")
+            QMessageBox.warning(self, "Warnung", "Home Position nicht möglich während Messung läuft.")
+            return
+
+        self.logger.info("Fahre in Home-Position und kalibriere Nullpunkt...")
+
+        # Motor in Home-Position fahren
+        if self.motor_controller and self.motor_controller.is_connected:
+            if self.motor_controller.home_position():
+                self.logger.info("✓ Motor in Home-Position (0°)")
+            else:
+                self.logger.error("✗ Motor-Homing fehlgeschlagen")
+                QMessageBox.critical(self, "Fehler", "Motor-Homing fehlgeschlagen")
+                return
+        else:
+            self.logger.warning("Motor-Controller nicht verfügbar")
+
+        # Torque-Nullpunkt kalibrieren
+        if self.nidaqmx_task:
+            self.nidaqmx_task.calibrate_zero()
+            self.logger.info("✓ Torque-Nullpunkt kalibriert")
+
+        self.logger.info("✓ Home-Position und Kalibrierung erfolgreich")
+        QMessageBox.information(self, "Erfolg", "Home-Position erreicht und Nullpunkt kalibriert!")
+
+    def measure_manual(self) -> None:
+        """Manuelle Einzelmessung (Test-Funktion)."""
+        if self.is_process_running:
+            self.logger.warning("Messung läuft bereits. Manuelle Messung nicht möglich.")
+            return
+
+        if not self.are_instruments_initialized or not self.nidaqmx_task or not self.nidaqmx_task.is_task_created:
+            self.logger.warning("Hardware nicht initialisiert")
+            QMessageBox.warning(self, "Warnung", "Hardware nicht initialisiert.\nBitte zuerst 'Activate Hardware' drücken.")
+            return
+
+        try:
+            # Position vom Motor lesen
+            angle = 0.0
+            if self.motor_controller and self.motor_controller.is_connected:
+                angle = self.motor_controller.get_position()
+
+            # Spannung lesen
+            voltage = self.nidaqmx_task.read_torque_voltage(angle)
+
+            # Torque berechnen
+            torque = voltage * TORQUE_SCALE
+
+            self.logger.info(f"Manuelle Messung: Angle={angle:.2f}°, Voltage={voltage:.6f}V, Torque={torque:.6f}Nm")
+
+            # GUI aktualisieren
+            self.dmm_voltage.setText(f"{voltage:.6f}")
+            self.force_meas.setText(f"{torque:.6f}")
+            self.distance_meas.setText(f"{angle:.6f}")
+
+            # Optional: Punkt zum Graph hinzufügen
+            if not self.is_process_running:
+                self.torque_data.append(torque)
+                self.angle_data.append(angle)
+                if hasattr(self, "torque_curve"):
+                    self.torque_curve.setData(self.angle_data, self.torque_data)
+
+        except Exception as e:
+            self.logger.error(f"Fehler bei manueller Messung: {e}")
+            QMessageBox.critical(self, "Fehler", f"Fehler bei manueller Messung:\n{e}")
+
+    # ---------- Measurement Funktionen ----------
 
     def start_measurement(self) -> None:
-        # Check if hardware is initialized
+        """Startet die Messung."""
         if self.is_process_running:
-            self.logger.warning("Measurement is already running.")
+            self.logger.warning("Messung läuft bereits")
             return
+
         if not self.are_instruments_initialized:
-            self.logger.error("Instruments not initialized. Please activate hardware first.")
-            QMessageBox.critical(self, "Error", "Instruments not initialized. Please activate hardware first.")
+            self.logger.error("Hardware nicht initialisiert")
+            QMessageBox.critical(self, "Fehler", "Hardware nicht initialisiert.\nBitte zuerst 'Activate Hardware' drücken.")
             return
-        # Startzeit für verstrichene Zeit speichern
-        from datetime import datetime
 
+        # Parameter auslesen
+        max_angle = self.get_max_angle()
+        max_torque = self.get_max_torque()
+        max_velocity = self.get_max_velocity()
+
+        self.logger.info("=" * 60)
+        self.logger.info("MESSUNG STARTEN")
+        self.logger.info(f"Max Angle: {max_angle}°")
+        self.logger.info(f"Max Torque: {max_torque} Nm")
+        self.logger.info(f"Max Velocity: {max_velocity}°/s")
+        self.logger.info("=" * 60)
+
+        # Startzeit speichern
         self.start_time_timestamp = datetime.now()
-        self.logger.info(f"Measurement started at {self.start_time_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info(f"Startzeit: {self.start_time_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        # Den Messordner erstellen
+        # Messordner erstellen
         if not self.create_measurement_folder():
-            self.logger.error("Failed to create measurement folder")
+            self.logger.error("Fehler beim Erstellen des Messordners")
             return
 
-        # Measurement timer starten
+        # Motor starten
+        if self.motor_controller and self.motor_controller.is_connected:
+            if self.motor_controller.move_continuous(max_velocity):
+                direction = "im Uhrzeigersinn" if max_velocity > 0 else "gegen Uhrzeigersinn"
+                self.logger.info(f"✓ Motor gestartet mit {abs(max_velocity)}°/s {direction}")
+            else:
+                self.logger.error("✗ Motor-Start fehlgeschlagen")
+                QMessageBox.critical(self, "Fehler", "Motor-Start fehlgeschlagen")
+                return
+
+        # Measurement Timer starten
         self.setup_measurement_timer()
 
-        # Process Status setzen
+        # Graph-Daten zurücksetzen
+        self.reset_graph_data()
+
+        # Status setzen
         self.is_process_running = True
         self.process_run_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
 
-        # Setup-Steuerelemente während der Messung deaktivieren
+        # Setup-Controls deaktivieren
         self.set_setup_controls_enabled(False)
 
-        self.logger.info("Measurement started successfully")
+        self.logger.info("✓ Messung erfolgreich gestartet")
 
     def stop_measurement(self) -> None:
-        """
-        Stoppt die laufende Messung.
-        """
+        """Stoppt die laufende Messung."""
         if not self.is_process_running:
-            self.logger.warning("No measurement is currently running")
+            self.logger.warning("Keine Messung läuft")
             return
 
-        # Measurement timer stoppen
+        self.logger.info("MESSUNG STOPPEN")
+
+        # Measurement Timer stoppen
         if hasattr(self, "measurement_timer") and self.measurement_timer:
             self.measurement_timer.stop()
-            self.logger.info("Measurement timer stopped")
+            self.logger.info("✓ Measurement Timer gestoppt")
 
-        # Process Status zurücksetzen
+        # Motor stoppen
+        if self.motor_controller and self.motor_controller.is_connected:
+            if self.motor_controller.stop_movement():
+                self.logger.info("✓ Motor gestoppt")
+            else:
+                self.logger.error("✗ Motor-Stop fehlgeschlagen")
+
+        # Status zurücksetzen
         self.is_process_running = False
         self.process_run_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
-        # Setup-Steuerelemente wieder aktivieren
+        # Setup-Controls wieder aktivieren
         self.set_setup_controls_enabled(True)
 
         # Startzeit zurücksetzen
         self.start_time_timestamp = None
 
-        self.logger.info("Measurement stopped successfully")
+        self.logger.info("✓ Messung erfolgreich gestoppt")
 
-    def create_measurement_folder(self) -> None:
-        """
-        Erstellt die Ordnerstruktur für eine neue Messung:
-        - Hauptordner: Datum_Uhrzeit_Probename
-        - Messdatei: Probename.txt mit Header
-        """
+    def setup_measurement_timer(self) -> None:
+        """Initialisiert und startet den Measurement Timer."""
+        if self.measurement_timer is not None:
+            self.measurement_timer.stop()
+
+        self.measurement_timer = QTimer()
+        self.measurement_timer.timeout.connect(self.measure)
+        self.measurement_timer.start(MEASUREMENT_INTERVAL)
+        self.logger.info(f"✓ Measurement Timer gestartet ({MEASUREMENT_INTERVAL}ms)")
+
+    def create_measurement_folder(self) -> bool:
+        """Erstellt die Ordnerstruktur für eine neue Messung."""
         if not self.sample_name or not self.project_dir:
-            self.logger.error("Sample name or project directory not set. Cannot create measurement folder.")
+            self.logger.error("Sample-Name oder Projektverzeichnis nicht gesetzt")
+            QMessageBox.critical(self, "Fehler", "Sample-Name oder Projektverzeichnis nicht gesetzt.")
             return False
 
-        # Datum und Uhrzeit für den Ordnernamen generieren
-        from datetime import datetime
-
+        # Datum und Uhrzeit für Ordnernamen
         timestamp = datetime.now()
         date_str = timestamp.strftime("%Y%m%d")
         time_str = timestamp.strftime("%H%M%S")
@@ -898,173 +1034,136 @@ class MainWindow(QMainWindow):
         try:
             # Hauptmessordner erstellen
             os.makedirs(self.measurement_dir, exist_ok=True)
-            self.logger.info(f"Created measurement directory: {self.measurement_dir}")
+            self.logger.info(f"✓ Messordner erstellt: {self.measurement_dir}")
 
-            # Messdatei erstellen mit Datum, Zeit und Sample Name
+            # Messdatei erstellen mit Header
             measurement_filename = f"{date_str}_{time_str}_{self.sample_name}_DATA.txt"
             measurement_file = os.path.join(self.measurement_dir, measurement_filename)
+
             with open(measurement_file, "w", encoding="utf-8") as f:
-                # Header-Zeile 1: Datum und Probenname
+                # Header
                 header_date = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                 f.write(f"# Measurement started: {header_date} - Sample: {self.sample_name}\n")
+                f.write(f"# Max Angle: {self.get_max_angle()}° | Max Torque: {self.get_max_torque()} Nm | Max Velocity: {self.get_max_velocity()}°/s\n")
+                f.write(f"# Torque Scale: {TORQUE_SCALE} Nm/V | Interval: {MEASUREMENT_INTERVAL}ms\n")
 
-                # Header-Zeile 2: Parameter-Informationen (verwendet aktuelle GUI-Werte)
-                f.write(
-                    f"# Force Scale [N/V]: {self.get_current_force_scale()} | "
-                    f"Distance Scale [mm/V]: {self.get_current_distance_scale()} | "
-                    f"Interval: {self.get_current_interval()}ms\n"
-                )
+                # Spaltenüberschriften
+                header_columns = ["Time", "Voltage", "Torque", "Angle"]
+                header_units = ["[HH:mm:ss.f]", "[V]", "[Nm]", "[°]"]
 
-                # Header-Zeile 4: Spaltenüberschriften (ohne Units)
-                header_columns = ["Time", "Voltage_Force", "Voltage_Distance", "Force", "Distance"]
-
-                # Header-Zeile 5: Units
-                header_units = ["[HH:mm:ss.f]", "[V]", "[V]", "[N]", "[mm]"]
-
-                # Zeile 4: Spaltenüberschriften schreiben
                 f.write("\t".join(header_columns) + "\n")
-
-                # Zeile 5: Units schreiben
                 f.write("\t".join(header_units) + "\n")
 
-            self.logger.info(f"Created measurement file: {measurement_file}")
-
-            # Dateiname für späteren Zugriff speichern
+            self.logger.info(f"✓ Messdatei erstellt: {measurement_filename}")
             self.measurement_filename = measurement_filename
-
-            # Graph-Daten für neue Messung zurücksetzen
-            self.reset_graph_data()
 
             return True
 
         except Exception as e:
-            self.logger.error(f"Error creating measurement folder: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to create measurement folder:\n{e}")
+            self.logger.error(f"✗ Fehler beim Erstellen des Messordners: {e}")
+            QMessageBox.critical(self, "Fehler", f"Fehler beim Erstellen des Messordners:\n{e}")
+            return False
+
+    def write_measurement_data(self, timestamp: str, voltage: float, torque: float, angle: float):
+        """Schreibt Messdaten in die Messdatei."""
+        if not self.measurement_dir or not hasattr(self, "measurement_filename") or not self.measurement_filename:
+            return False
+
+        measurement_file = os.path.join(self.measurement_dir, self.measurement_filename)
+        try:
+            with open(measurement_file, "a", encoding="utf-8") as f:
+                data_row = [
+                    timestamp,
+                    f"{voltage:.6f}",
+                    f"{torque:.6f}",
+                    f"{angle:.6f}",
+                ]
+                f.write("\t".join(data_row) + "\n")
+            return True
+        except Exception as e:
+            self.logger.error(f"Fehler beim Schreiben der Messdaten: {e}")
             return False
 
     def measure(self):
         """
-        Zentrale Messfunktion für den Torsionsprüfstand.
-        ==============================================
-
-        Diese Funktion wird regelmäßig vom Timer aufgerufen und führt einen kompletten
-        Messzyklus durch. Für eine Techniker-Abschlussarbeit ist es wichtig zu verstehen,
-        dass diese Funktion das "Herzstück" der Datenerfassung ist.
-
-        Messablauf:
-        1. Zeitstempel berechnen (verstrichene Zeit seit Messbeginn)
-        2. Spannungen von der Messkarte lesen (Kraft und Distanz)
-        3. Spannungen in physikalische Werte umrechnen (Newton und Millimeter)
-        4. Daten im Diagramm anzeigen (Force vs. Distance Plot)
-        5. Daten in Datei speichern für spätere Auswertung
-        6. GUI-Elemente mit aktuellen Werten aktualisieren
-
-        Die Funktion ist robust programmiert und fängt Fehler ab, damit der
-        Torsionsprüfstand auch bei Hardware-Problemen nicht abstürzt.
+        Zentrale Messfunktion - wird vom Timer aufgerufen.
         """
-        # Sicherheitscheck: Nur messen wenn eine Messung läuft
         if not self.is_process_running:
             return
 
-        from datetime import datetime
-
-        # === SCHRITT 1: Zeitstempel berechnen ===
-        # Verstrichene Zeit seit Messbeginn für die Datenaufzeichnung
+        # Zeitstempel berechnen
         if self.start_time_timestamp:
             elapsed = datetime.now() - self.start_time_timestamp
             total_seconds = elapsed.total_seconds()
             hours = int(total_seconds // 3600)
             minutes = int((total_seconds % 3600) // 60)
             seconds = int(total_seconds % 60)
-            milliseconds = int((total_seconds % 1) * 10)  # Zehntelsekunden (100ms Auflösung)
+            milliseconds = int((total_seconds % 1) * 10)
             elapsed_time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds}"
         else:
             elapsed_time_str = "00:00:00.0"
 
-        # === SCHRITT 2: Spannungen von der Messkarte lesen ===
-        # Initialisierung mit Standardwerten (wichtig für Fehlerbehandlung)
-        force_volt = 0.0  # Spannung vom Kraftsensor in Volt
-        distance_volt = 0.0  # Spannung vom Distanzsensor in Volt
+        # Position vom Motor lesen
+        angle = 0.0
+        if self.motor_controller and self.motor_controller.is_connected:
+            angle = self.motor_controller.get_position()
 
+        # Spannung vom DAQ lesen
+        voltage = 0.0
         try:
-            # Nur lesen wenn die DAQ-Hardware erfolgreich initialisiert wurde
             if self.nidaqmx_task and self.nidaqmx_task.is_task_created:
-                force_volt, distance_volt = self.nidaqmx_task.read_task_voltages()
-                self.logger.debug(f"Spannungen erfolgreich gelesen: Kraft={force_volt:.6f}V, Distanz={distance_volt:.6f}V")
-            else:
-                self.logger.warning("DAQmx Task nicht verfügbar - verwende Nullwerte")
+                voltage = self.nidaqmx_task.read_torque_voltage(angle)
         except Exception as e:
-            # Fehlerbehandlung: Bei Hardware-Problemen weitermachen statt abzustürzen
-            self.logger.warning(f"Fehler beim Lesen der DAQ-Spannungen: {e}")
+            self.logger.warning(f"Fehler beim Lesen der DAQ-Spannung: {e}")
 
-        # === SCHRITT 3: Spannungen in physikalische Werte umrechnen ===
-        # Hier passiert die wichtige Umrechnung von Volt in Newton und Millimeter
-        # Die Skalierungsfaktoren kommen aus der GUI oder den Konstanten
-        force_value = force_volt * self.get_current_force_scale()  # [V] * [N/V] = [N]
-        distance_value = distance_volt * self.get_current_distance_scale()  # [V] * [mm/V] = [mm]
+        # Torque berechnen
+        torque = voltage * TORQUE_SCALE
 
-        # === SCHRITT 4: Daten im Diagramm darstellen ===
-        # Für die Techniker-Abschlussarbeit: Das Diagramm zeigt Force vs. Distance
-        # So kann man sehen, wie sich die Kraft bei steigender Verdrehung verhält
-        self.force_data.append(force_value)  # Neue Kraft zur Liste hinzufügen
-        self.distance_data.append(distance_value)  # Neue Distanz zur Liste hinzufügen
+        # Daten zum Graph hinzufügen
+        self.torque_data.append(torque)
+        self.angle_data.append(angle)
 
-        # Graph mit den neuen Datenpunkten aktualisieren (nur wenn vorhanden)
-        if hasattr(self, "force_curve"):
-            self.force_curve.setData(self.distance_data, self.force_data)
+        if hasattr(self, "torque_curve"):
+            self.torque_curve.setData(self.angle_data, self.torque_data)
 
-        # === SCHRITT 5: Daten in Datei speichern ===
-        # Alle Messdaten werden in eine Textdatei geschrieben für spätere Auswertung
-        # Format: Zeit, Spannung_Kraft, Spannung_Distanz, Kraft, Distanz
-        self.write_measurement_data(elapsed_time_str, force_volt, distance_volt, force_value, distance_value)
+        # Daten in Datei schreiben
+        self.write_measurement_data(elapsed_time_str, voltage, torque, angle)
 
-        # === SCHRITT 6: GUI aktualisieren ===
-        # Zum Schluss werden alle Anzeige-Elemente mit den neuen Werten aktualisiert
-        self.update_measurement_gui(force_volt, distance_volt, force_value, distance_value)
+        # GUI aktualisieren
+        self.update_measurement_gui(voltage, torque, angle)
 
-    def update_measurement_gui(self, force_volt, distance_volt, force_value, distance_value):
-        """
-        Aktualisiert die GUI-Anzeigen nach einer Messung.
-        ================================================
+        # Stopbedingungen prüfen
+        max_angle = self.get_max_angle()
+        max_torque = self.get_max_torque()
 
-        Diese Funktion zeigt die gemessenen Werte in der Benutzeroberfläche an.
-        Für eine Techniker-Abschlussarbeit wichtig: Die GUI zeigt sowohl die
-        rohen Spannungswerte (für Debugging) als auch die umgerechneten
-        physikalischen Werte (für die eigentliche Messung).
+        stop_reason = None
 
-        Args:
-            force_volt (float): Kraftsensor-Spannung in Volt
-            distance_volt (float): Distanzsensor-Spannung in Volt
-            force_value (float): Umgerechnete Kraft in Newton
-            distance_value (float): Umgerechnete Distanz in Millimeter
-        """
-        # Spannungswerte anzeigen (6 Nachkommastellen für Präzision)
-        # Verwende dmm_voltage für die Spannungsanzeige
-        self.dmm_voltage.setText(f"{force_volt:.6f}")
+        # Max Angle erreicht?
+        if abs(angle) >= abs(max_angle):
+            stop_reason = f"Max Angle erreicht ({angle:.2f}° >= {max_angle}°)"
 
-        # Physikalische Werte anzeigen (6 Nachkommastellen für Präzision)
-        self.force_meas.setText(f"{force_value:.6f}")
-        self.distance_meas.setText(f"{distance_value:.6f}")
+        # Max Torque erreicht?
+        if abs(torque) >= abs(max_torque):
+            stop_reason = f"Max Torque erreicht ({torque:.2f} Nm >= {max_torque} Nm)"
+
+        if stop_reason:
+            self.logger.info(f"STOPP: {stop_reason}")
+            self.stop_measurement()
+
+    def update_measurement_gui(self, voltage: float, torque: float, angle: float):
+        """Aktualisiert die GUI-Anzeigen nach einer Messung."""
+        self.dmm_voltage.setText(f"{voltage:.6f}")
+        self.force_meas.setText(f"{torque:.6f}")
+        self.distance_meas.setText(f"{angle:.6f}")
 
 
 # ==================================================================================
-# HAUPTPROGRAMM - Einstiegspunkt für den Torsionsprüfstand
+# HAUPTPROGRAMM
 # ==================================================================================
-
 
 if __name__ == "__main__":
     """
     Haupteinstiegspunkt für den Torsionsprüfstand.
-    
-    Hier wird die PyQt6-Anwendung gestartet. Für eine Techniker-Abschlussarbeit
-    ist es wichtig zu verstehen, dass dies der erste Code ist, der ausgeführt wird,
-    wenn das Programm gestartet wird.
-    
-    Der Ablauf:
-    1. QApplication erstellen (verwaltet die gesamte GUI)
-    2. MainWindow erstellen (unser Hauptfenster mit allen Funktionen)
-    3. Fenster anzeigen
-    4. Event-Loop starten (wartet auf Benutzer-Eingaben)
     """
     app = QApplication(sys.argv)
     w = MainWindow()
