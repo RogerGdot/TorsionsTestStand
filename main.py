@@ -50,7 +50,12 @@ from PyQt6.QtWidgets import (
 
 # Project Imports
 from src.gui.stylesheet import get_dark_stylesheet
-from src.hardware import DAQmxTask, N5NanotecController
+from src.hardware import (
+    DAQmxTask,
+    MotorControllerBase,
+    NanotecMotorController,
+    TrinamicMotorController,
+)
 from src.utils.logger_helper import GuiLogger, WrappingFormatter
 
 # ===========================================================================================
@@ -75,12 +80,16 @@ DAQ_VOLTAGE_RANGE = 10.0  # ±10V Messbereich
 MEASUREMENT_INTERVAL = 100  # Messintervall in Millisekunden (10 Hz = 100ms)
 DEFAULT_SAMPLE_NAME = "TorsionTest"  # Standard-Probenname
 
-# N5 Nanotec Schrittmotor-Konfiguration
-N5_IP_ADDRESS = "192.168.0.100"  # IP-Adresse des N5 Controllers
-N5_MODBUS_PORT = 502  # Standard Modbus TCP Port
-N5_SLAVE_ID = 1  # Modbus Slave ID
-MOTOR_TYPE = "N5_NANOTEC"  # Motor-Typ
-MOTOR_ENABLED = True  # Motor-Steuerung aktiviert
+# Motor-Controller Konfiguration
+# Wähle Motor-Typ: "nanotec" oder "trinamic"
+MOTOR_TYPE = "nanotec"  # "nanotec" = Nanotec mit NanoLib, "trinamic" = Trinamic Steprocker
+
+# Nanotec-spezifische Konfiguration
+NANOTEC_BUS_HARDWARE = "ixxat"  # Bus-Hardware: "ixxat", "kvaser", "socketcan"
+
+# Trinamic-spezifische Konfiguration
+TRINAMIC_COM_PORT = "COM3"  # COM-Port des Trinamic Steprocker
+TRINAMIC_MOTOR_ID = 0  # Motor ID
 
 # Motor-Parameter (Standardwerte)
 DEFAULT_MAX_ANGLE = 360.0  # Standard maximaler Winkel [Grad]
@@ -151,7 +160,7 @@ class MainWindow(QMainWindow):
 
         # Hardware-Objekte
         self.nidaqmx_task: DAQmxTask = None
-        self.motor_controller: N5NanotecController = None
+        self.motor_controller: MotorControllerBase = None  # Kann Nanotec oder Trinamic sein
         self.measurement_timer: QTimer = None
 
         # Zeitmessung
@@ -472,21 +481,30 @@ class MainWindow(QMainWindow):
             success = False
             self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
-        # --- N5 Nanotec Motor aktivieren ---
+        # --- Motor-Controller aktivieren (Nanotec oder Trinamic) ---
         try:
-            self.logger.info(f"Initialisiere N5 Nanotec Controller (IP: {N5_IP_ADDRESS})...")
-            self.motor_controller = N5NanotecController(ip_address=N5_IP_ADDRESS, port=N5_MODBUS_PORT, slave_id=N5_SLAVE_ID, demo_mode=DEMO_MODE)
+            self.logger.info(f"Initialisiere Motor-Controller (Typ: {MOTOR_TYPE})...")
+
+            # Motor-Controller basierend auf MOTOR_TYPE erstellen
+            if MOTOR_TYPE.lower() == "nanotec":
+                self.motor_controller = NanotecMotorController(bus_hardware=NANOTEC_BUS_HARDWARE, demo_mode=DEMO_MODE)
+                motor_name = "Nanotec Motor"
+            elif MOTOR_TYPE.lower() == "trinamic":
+                self.motor_controller = TrinamicMotorController(port=TRINAMIC_COM_PORT, motor_id=TRINAMIC_MOTOR_ID, demo_mode=DEMO_MODE)
+                motor_name = "Trinamic Steprocker"
+            else:
+                raise ValueError(f"Unbekannter Motor-Typ: {MOTOR_TYPE}")
 
             if self.motor_controller.connect():
-                self.logger.info("✓ N5 Nanotec Controller erfolgreich verbunden")
+                self.logger.info(f"✓ {motor_name} erfolgreich verbunden")
                 self.N5_contr_activ_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
             else:
-                error_messages.append("N5 Nanotec Controller konnte nicht verbunden werden")
+                error_messages.append(f"{motor_name} konnte nicht verbunden werden")
                 success = False
                 self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
         except Exception as e:
-            self.logger.error(f"✗ Fehler beim Verbinden des N5 Nanotec Controllers: {e}")
-            error_messages.append(f"N5 Nanotec Fehler: {e}")
+            self.logger.error(f"✗ Fehler beim Verbinden des Motor-Controllers: {e}")
+            error_messages.append(f"Motor-Controller Fehler: {e}")
             success = False
             self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 

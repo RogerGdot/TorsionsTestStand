@@ -77,6 +77,12 @@ src/
 - Writes data row to file
 - Checks stop conditions
 
+**GUI State Management:**
+- Setup controls (parameters, hardware buttons) are disabled during active measurement
+- Stop button remains enabled at all times for safety
+- Hardware must be activated before measurements can begin
+- Home position calibration recommended before each measurement session
+
 ### Critical Configuration (main.py lines 61-88)
 
 All hardware parameters are defined as constants at the top of `main.py`:
@@ -98,7 +104,7 @@ All hardware parameters are defined as constants at the top of `main.py`:
 - Wraps NI-DAQmx for voltage measurement
 - Integrates with `DemoHardwareSimulator` when `demo_mode=True`
 - Methods: `create_nidaqmx_task()`, `read_torque_voltage(angle)`, `calibrate_zero()`, `close_nidaqmx_task()`
-- Zero calibration: Takes 10 samples and calculates offset
+- Zero calibration: Calculates offset based on current reading
 
 **DemoHardwareSimulator** ([demo_simulator.py](src/hardware/demo_simulator.py)):
 - Simulates realistic torque readings based on angle with noise
@@ -130,6 +136,7 @@ Measurement data is saved as tab-delimited text files with:
 - Columns: `Time`, `Voltage`, `Torque`, `Angle`
 - Units: `[HH:mm:ss.f]`, `[V]`, `[Nm]`, `[°]`
 - Files are named: `YYYYMMDD_HHMMSS_<SampleName>_DATA.txt`
+- Location: Stored in user-selected project directory (selected via "Select Project Directory" button)
 
 ## Important Notes
 
