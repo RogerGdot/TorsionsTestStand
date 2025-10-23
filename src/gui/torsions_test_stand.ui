@@ -164,7 +164,7 @@
               <number>12</number>
              </property>
              <item row="2" column="1">
-              <widget class="QLabel" name="nidaq_activ_led">
+              <widget class="QLabel" name="dmm_led">
                <property name="enabled">
                 <bool>false</bool>
                </property>
@@ -206,7 +206,7 @@ border: 2px solid black;
                 </font>
                </property>
                <property name="text">
-                <string>N5 Controller activ</string>
+                <string>Controller activ</string>
                </property>
               </widget>
              </item>
@@ -287,12 +287,12 @@ border: 2px solid black;
                 </font>
                </property>
                <property name="text">
-                <string>NIDAQ activ</string>
+                <string>DMM activ</string>
                </property>
               </widget>
              </item>
              <item row="3" column="1">
-              <widget class="QLabel" name="N5_contr_activ_led">
+              <widget class="QLabel" name="controller_led">
                <property name="enabled">
                 <bool>false</bool>
                </property>

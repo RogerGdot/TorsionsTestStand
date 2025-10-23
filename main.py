@@ -170,6 +170,11 @@ class MainWindow(QMainWindow):
         self.torque_data = []  # Liste für Torque-Werte in Nm
         self.angle_data = []  # Liste für Angle-Werte in Grad
 
+        # Parameter-Werte (werden direkt bei Änderung aktualisiert)
+        self.max_angle_value = DEFAULT_MAX_ANGLE
+        self.max_torque_value = DEFAULT_MAX_TORQUE
+        self.max_velocity_value = DEFAULT_MAX_VELOCITY
+
     def closeEvent(self, event) -> None:
         """Wird beim Schließen des Fensters aufgerufen."""
         self.logger.info("Torsions Test Stand wird geschlossen")
@@ -333,10 +338,10 @@ class MainWindow(QMainWindow):
         # Sample-Name setzen
         self.smp_name.setText(self.sample_name)
 
-        # Max-Werte initialisieren
-        self.max_angle.setText(str(DEFAULT_MAX_ANGLE))
-        self.max_torque.setText(str(DEFAULT_MAX_TORQUE))
-        self.max_velocity.setText(str(DEFAULT_MAX_VELOCITY))
+        # Max-Werte initialisieren (GUI-Felder)
+        self.max_angle.setText(str(self.max_angle_value))
+        self.max_torque.setText(str(self.max_torque_value))
+        self.max_velocity.setText(str(self.max_velocity_value))
 
         # GUI-Signale verbinden
         if not self.grp_box_connected:
@@ -358,23 +363,17 @@ class MainWindow(QMainWindow):
             self.demo_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
             self.logger.info("Demo-LED: ROT (Echte Hardware)")
 
-    def get_max_angle(self) -> float:
-        """Liest den Max Angle Wert aus der GUI."""
-        return self.safe_float(self.max_angle.text(), DEFAULT_MAX_ANGLE)
-
-    def get_max_torque(self) -> float:
-        """Liest den Max Torque Wert aus der GUI."""
-        return self.safe_float(self.max_torque.text(), DEFAULT_MAX_TORQUE)
-
-    def get_max_velocity(self) -> float:
-        """Liest den Max Velocity Wert aus der GUI."""
-        return self.safe_float(self.max_velocity.text(), DEFAULT_MAX_VELOCITY)
-
     def accept_parameter(self) -> None:
-        """Parameter-Akzeptierung."""
+        """Parameter-Akzeptierung - Übernimmt geänderte Werte direkt in Instance-Variablen."""
         if getattr(self, "block_parameter_signals", False):
             return
-        self.logger.debug("Parameter akzeptiert")
+
+        # Werte direkt aus GUI-Elementen übernehmen
+        self.max_angle_value = self.safe_float(self.max_angle.text(), DEFAULT_MAX_ANGLE)
+        self.max_torque_value = self.safe_float(self.max_torque.text(), DEFAULT_MAX_TORQUE)
+        self.max_velocity_value = self.safe_float(self.max_velocity.text(), DEFAULT_MAX_VELOCITY)
+
+        self.logger.debug(f"Parameter akzeptiert - Angle: {self.max_angle_value}°, Torque: {self.max_torque_value} Nm, Velocity: {self.max_velocity_value}°/s")
 
     def update_sample_name(self) -> None:
         """Aktualisiert den Sample-Namen."""
@@ -470,16 +469,16 @@ class MainWindow(QMainWindow):
 
             if self.nidaqmx_task.is_task_created:
                 self.logger.info("✓ NI-6000 DAQ erfolgreich initialisiert")
-                self.nidaq_activ_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
+                self.dmm_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
             else:
                 error_messages.append("NI-6000 DAQ konnte nicht initialisiert werden")
                 success = False
-                self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+                self.dmm_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
         except Exception as e:
             self.logger.error(f"✗ Fehler beim Initialisieren der NI-6000 DAQ: {e}")
             error_messages.append(f"NI-6000 DAQ Fehler: {e}")
             success = False
-            self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+            self.dmm_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
         # --- Motor-Controller aktivieren (Nanotec oder Trinamic) ---
         try:
@@ -497,16 +496,16 @@ class MainWindow(QMainWindow):
 
             if self.motor_controller.connect():
                 self.logger.info(f"✓ {motor_name} erfolgreich verbunden")
-                self.N5_contr_activ_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
+                self.controller_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
             else:
                 error_messages.append(f"{motor_name} konnte nicht verbunden werden")
                 success = False
-                self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+                self.controller_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
         except Exception as e:
             self.logger.error(f"✗ Fehler beim Verbinden des Motor-Controllers: {e}")
             error_messages.append(f"Motor-Controller Fehler: {e}")
             success = False
-            self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+            self.controller_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
         QtWidgets.QApplication.restoreOverrideCursor()
 
@@ -557,8 +556,8 @@ class MainWindow(QMainWindow):
         self.set_setup_controls_enabled(True)
 
         # LED-Status aktualisieren
-        self.nidaq_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
-        self.N5_contr_activ_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+        self.dmm_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
+        self.controller_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
         QtWidgets.QApplication.restoreOverrideCursor()
         self.logger.info("✓ Hardware erfolgreich deaktiviert")
@@ -651,9 +650,9 @@ class MainWindow(QMainWindow):
             return
 
         # Parameter auslesen
-        max_angle = self.get_max_angle()
-        max_torque = self.get_max_torque()
-        max_velocity = self.get_max_velocity()
+        max_angle = self.max_angle_value
+        max_torque = self.max_torque_value
+        max_velocity = self.max_velocity_value
 
         self.logger.info("=" * 60)
         self.logger.info("MESSUNG STARTEN")
@@ -767,7 +766,7 @@ class MainWindow(QMainWindow):
                 # Header
                 header_date = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                 f.write(f"# Measurement started: {header_date} - Sample: {self.sample_name}\n")
-                f.write(f"# Max Angle: {self.get_max_angle()}° | Max Torque: {self.get_max_torque()} Nm | Max Velocity: {self.get_max_velocity()}°/s\n")
+                f.write(f"# Max Angle: {self.max_angle_value}° | Max Torque: {self.max_torque_value} Nm | Max Velocity: {self.max_velocity_value}°/s\n")
                 f.write(f"# Torque Scale: {TORQUE_SCALE} Nm/V | Interval: {MEASUREMENT_INTERVAL}ms\n")
 
                 # Spaltenüberschriften
@@ -856,8 +855,8 @@ class MainWindow(QMainWindow):
         self.update_measurement_gui(voltage, torque, angle)
 
         # Stopbedingungen prüfen
-        max_angle = self.get_max_angle()
-        max_torque = self.get_max_torque()
+        max_angle = self.max_angle_value
+        max_torque = self.max_torque_value
 
         stop_reason = None
 
