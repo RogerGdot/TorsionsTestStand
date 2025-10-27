@@ -333,6 +333,7 @@ class MainWindow(QMainWindow):
         self.block_parameter_signals = False  # Blockiert Parameter-Updates während Initialisierung
         self.grp_box_connected = False  # Flag ob GUI-Events bereits verbunden sind
         self.is_process_running = False  # True = Messung läuft gerade
+        self.is_monitoring_active = False  # True = Kontinuierliches Monitoring (für Einstellungen) läuft
         self.are_instruments_initialized = False  # True = Hardware ist bereit
 
         # --- Proben-Identifikation ---
@@ -347,6 +348,7 @@ class MainWindow(QMainWindow):
         self.nidaqmx_task: DAQmxTask = None  # NI-6000 DAQ für Torque + Angle Messung
         self.motor_controller: MotorControllerBase = None  # Schrittmotor (Nanotec oder Trinamic)
         self.measurement_timer: QTimer = None  # Timer für periodische Datenerfassung
+        self.monitoring_timer: QTimer = None  # Timer für kontinuierliches Monitoring (Einstellungsmodus)
 
         # --- Zeitmessung für Messung ---
         self.start_time_timestamp = None  # Startzeitpunkt der Messung (datetime Objekt)
@@ -403,12 +405,17 @@ class MainWindow(QMainWindow):
         self.logger.info("Programm wird beendet...")
         self.logger.info("=" * 60)
 
-        # Schritt 1: Stoppe laufende Messung (falls aktiv)
+        # Schritt 1: Stoppe kontinuierliches Monitoring (falls aktiv)
+        if self.is_monitoring_active:
+            self.logger.info("→ Stoppe kontinuierliches Monitoring...")
+            self.stop_continuous_monitoring()
+
+        # Schritt 2: Stoppe laufende Messung (falls aktiv)
         if self.is_process_running:
             self.logger.info("→ Stoppe laufende Messung...")
             self.stop_measurement()
 
-        # Schritt 2: Deaktiviere Hardware (falls initialisiert)
+        # Schritt 3: Deaktiviere Hardware (falls initialisiert)
         if self.are_instruments_initialized:
             self.logger.info("→ Deaktiviere Hardware...")
             self.deactivate_hardware()
@@ -2192,16 +2199,129 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Erfolg", "Home-Position erreicht und Nullpunkt kalibriert!")
 
     def measure_manual(self) -> None:
-        """Manuelle Einzelmessung (Test-Funktion)."""
-        if self.is_process_running:
-            self.logger.warning("Messung läuft bereits. Manuelle Messung nicht möglich.")
+        """
+        Startet/Stoppt kontinuierliches Monitoring für Einstellungszwecke.
+        
+        FUNKTION:
+        ---------
+        Diese Funktion wurde umfunktioniert, um das kontinuierliche Monitoring
+        zu starten. Beim ersten Klick auf "Trigger NIDAQ" startet das Monitoring,
+        beim zweiten Klick wird es gestoppt (Toggle-Funktion).
+        
+        Alternativ kann das Monitoring auch mit dem "Stop Measurement" Button
+        gestoppt werden.
+        
+        Das Monitoring zeigt kontinuierlich die aktuellen Werte von Torque und
+        Angle an, speichert aber KEINE Daten. Es dient nur zur Überwachung
+        während der Systemeinstellung.
+        """
+        # Wenn Monitoring läuft → stoppen
+        if self.is_monitoring_active:
+            self.stop_continuous_monitoring()
             return
+        
+        # Wenn eine Messung läuft → nicht starten
+        if self.is_process_running:
+            self.logger.warning("Messung läuft bereits. Monitoring nicht möglich.")
+            QMessageBox.warning(self, "Warnung", "Eine Messung läuft bereits.\nBitte zuerst Messung stoppen.")
+            return
+        
+        # Ansonsten → Monitoring starten
+        self.start_continuous_monitoring()
 
+
+    def start_continuous_monitoring(self) -> None:
+        """
+        Startet kontinuierliche Messung für Einstellungszwecke (ohne Speicherung).
+        
+        FUNKTION:
+        ---------
+        Startet einen Timer, der kontinuierlich Torque und Angle vom DAQ liest
+        und in der GUI anzeigt. Es werden KEINE Daten gespeichert. Diese Funktion
+        dient nur zur Überwachung während der Einstellung des Systems.
+        
+        ABLAUF:
+        -------
+        1. Prüfe ob Hardware initialisiert ist
+        2. Prüfe ob bereits eine Messung oder Monitoring läuft
+        3. Starte Monitoring-Timer (100ms Intervall)
+        4. Setze Status-Flag is_monitoring_active
+        5. Informiere Benutzer
+        
+        AUFRUF:
+        -------
+        Wird aufgerufen durch Button "Trigger NIDAQ" (manual_trig_btn)
+        """
+        # Prüfe ob Hardware initialisiert ist
         if not self.are_instruments_initialized or not self.nidaqmx_task or not self.nidaqmx_task.is_task_created:
             self.logger.warning("Hardware nicht initialisiert")
             QMessageBox.warning(self, "Warnung", "Hardware nicht initialisiert.\nBitte zuerst 'Activate Hardware' drücken.")
             return
-
+        
+        # Prüfe ob bereits eine Messung läuft
+        if self.is_process_running:
+            self.logger.warning("Eine Messung läuft bereits. Monitoring nicht möglich.")
+            QMessageBox.warning(self, "Warnung", "Eine Messung läuft bereits.\nBitte zuerst Messung stoppen.")
+            return
+        
+        # Prüfe ob Monitoring bereits läuft
+        if self.is_monitoring_active:
+            self.logger.info("Kontinuierliches Monitoring läuft bereits")
+            return
+        
+        # Setze Status-Flag
+        self.is_monitoring_active = True
+        
+        # Erstelle Monitoring-Timer falls noch nicht vorhanden
+        if not self.monitoring_timer:
+            self.monitoring_timer = QTimer()
+            self.monitoring_timer.timeout.connect(self.update_monitoring_display)
+        
+        # Starte Timer (alle 100ms)
+        self.monitoring_timer.start(MEASUREMENT_INTERVAL)
+        
+        self.logger.info("=" * 60)
+        self.logger.info("Kontinuierliches Monitoring gestartet (nur Anzeige, keine Speicherung)")
+        self.logger.info("Drücken Sie 'Stop Measurement' zum Beenden")
+        self.logger.info("=" * 60)
+    
+    def stop_continuous_monitoring(self) -> None:
+        """
+        Stoppt das kontinuierliche Monitoring.
+        
+        FUNKTION:
+        ---------
+        Stoppt den Monitoring-Timer und setzt den Status zurück.
+        
+        AUFRUF:
+        -------
+        Wird aufgerufen durch Button "Stop Measurement" (stop_meas_btn)
+        oder beim Beenden des Programms
+        """
+        if not self.is_monitoring_active:
+            return
+        
+        # Stoppe Timer
+        if self.monitoring_timer:
+            self.monitoring_timer.stop()
+        
+        # Setze Status-Flag zurück
+        self.is_monitoring_active = False
+        
+        self.logger.info("Kontinuierliches Monitoring gestoppt")
+    
+    def update_monitoring_display(self) -> None:
+        """
+        Aktualisiert die Anzeige während des kontinuierlichen Monitorings.
+        
+        FUNKTION:
+        ---------
+        Liest aktuelle Werte von Torque und Angle vom DAQ und zeigt sie
+        in der GUI an. Diese Funktion wird vom monitoring_timer alle 100ms
+        aufgerufen.
+        
+        Es werden KEINE Daten gespeichert und der Graph wird NICHT aktualisiert.
+        """
         try:
             # Winkel messen (abhängig von ANGLE_MEASUREMENT_SOURCE)
             if ANGLE_MEASUREMENT_SOURCE == "daq":
@@ -2209,7 +2329,6 @@ class MainWindow(QMainWindow):
                 angle_voltage = self.nidaqmx_task.read_angle_voltage()
                 angle_0_360 = self.nidaqmx_task.scale_voltage_to_angle(angle_voltage)
                 angle = self.unwrap_angle(angle_0_360)  # Kontinuierlicher Winkel mit Unwrap
-                self.logger.debug(f"DAQ Angle: {angle_voltage:.3f}V → {angle_0_360:.2f}° (raw) → {angle:.2f}° (continuous)")
             else:
                 # Legacy: Position vom Motor-Controller lesen
                 angle = 0.0
@@ -2222,23 +2341,15 @@ class MainWindow(QMainWindow):
             # Torque berechnen
             torque = voltage * TORQUE_SCALE
 
-            self.logger.info(f"Manuelle Messung: Angle={angle:.2f}°, Voltage={voltage:.6f}V, Torque={torque:.6f}Nm")
-
-            # GUI aktualisieren
+            # GUI aktualisieren (nur Anzeige-Felder, nicht Graph)
             self.dmm_voltage.setText(f"{voltage:.6f}")
             self.force_meas.setText(f"{torque:.6f}")
             self.distance_meas.setText(f"{angle:.6f}")
 
-            # Optional: Punkt zum Graph hinzufügen
-            if not self.is_process_running:
-                self.torque_data.append(torque)
-                self.angle_data.append(angle)
-                if hasattr(self, "torque_curve"):
-                    self.torque_curve.setData(self.angle_data, self.torque_data)
-
         except Exception as e:
-            self.logger.error(f"Fehler bei manueller Messung: {e}")
-            QMessageBox.critical(self, "Fehler", f"Fehler bei manueller Messung:\n{e}")
+            self.logger.error(f"Fehler beim Monitoring-Update: {e}")
+            # Bei Fehler Monitoring stoppen
+            self.stop_continuous_monitoring()
 
     # ---------- Measurement Funktionen ----------
 
@@ -2482,8 +2593,16 @@ class MainWindow(QMainWindow):
         - Automatisch in closeEvent() beim Programm-Beenden
         """
         # ═════════════════════════════════════════════
-        # 1. PRÜFE OB MESSUNG LÄUFT
+        # 1. PRÜFE OB MESSUNG ODER MONITORING LÄUFT
         # ═════════════════════════════════════════════
+        # Wenn Monitoring läuft, stoppe es
+        if self.is_monitoring_active:
+            self.stop_continuous_monitoring()
+            # Wenn keine Messung läuft, sind wir fertig
+            if not self.is_process_running:
+                return
+        
+        # Wenn keine Messung läuft, nichts zu tun
         if not self.is_process_running:
             self.logger.warning("Keine Messung läuft")
             return
