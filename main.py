@@ -1459,70 +1459,260 @@ class MainWindow(QMainWindow):
         # Falls Messung läuft: Keine Änderung, stille Ignorierung
 
     def select_project_directory(self) -> None:
-        """Ordnerauswahl für Projektverzeichnis."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  PROJEKTVERZEICHNIS AUSWÄHLEN                                 ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Öffnet einen Dialog zur Auswahl des Projektordners für Messdaten.
+
+        FUNKTION:
+        ---------
+        Diese Funktion öffnet einen Standard-Windows-Ordnerauswahl-Dialog,
+        in dem der Benutzer den Hauptordner für alle Messungen festlegen kann.
+        Alle Messdaten werden in Unterordnern dieses Projekts gespeichert.
+
+        ABLAUF:
+        -------
+        1. Dialog öffnen (startet im zuletzt gewählten Ordner)
+        2. Benutzer wählt Ordner aus
+        3. Pfad in self.project_dir speichern
+        4. Pfad in GUI-Feld anzeigen (self.proj_dir)
+        5. Erfolg loggen
+
+        ORDNER-STRUKTUR:
+        ----------------
+        Gewählter Projektordner:
+        └── YYYYMMDD_HHMMSS_Probenname/
+            └── YYYYMMDD_HHMMSS_Probenname_DATA.txt
+
+        BEISPIEL:
+        ---------
+        Benutzer wählt: "C:/Messungen/Projekt_Torsion"
+
+        Nach Start einer Messung:
+          C:/Messungen/Projekt_Torsion/
+          ├── 20251027_143000_Probe001/
+          │   └── 20251027_143000_Probe001_DATA.txt
+          └── 20251027_150000_Probe002/
+              └── 20251027_150000_Probe002_DATA.txt
+
+        WICHTIG:
+        --------
+        - Muss VOR der ersten Messung gesetzt werden!
+        - Ordner wird NICHT automatisch erstellt (nur Unterordner)
+        - Wenn kein Ordner gewählt: Warnung im Log
+
+        AUFRUF:
+        -------
+        Button "Select Project Directory" in GUI
+        """
+        # Dialog-Objekt erstellen
         dialog = QFileDialog()
         options = dialog.options()
 
+        # Startpfad: Letzter Ordner oder aktuelles Verzeichnis
         start_path = self.project_dir if self.project_dir else os.getcwd()
-        folder = QFileDialog.getExistingDirectory(self, "Select Project Directory", start_path, options=options)
 
+        # Ordner-Auswahl-Dialog öffnen
+        folder = QFileDialog.getExistingDirectory(
+            self,  # Parent-Widget
+            "Select Project Directory",  # Dialog-Titel
+            start_path,  # Start-Verzeichnis
+            options=options,  # Dialog-Optionen
+        )
+
+        # Prüfe ob Ordner gewählt wurde (nicht abgebrochen)
         if folder:
-            self.project_dir = folder
-            self.proj_dir.setText(self.project_dir)
-            self.logger.info(f"Projektverzeichnis ausgewählt: {self.project_dir}")
+            self.project_dir = folder  # Pfad speichern
+            self.proj_dir.setText(self.project_dir)  # In GUI anzeigen
+            self.logger.info(f"✓ Projektverzeichnis ausgewählt: {self.project_dir}")
         else:
-            self.logger.warning("Kein Projektverzeichnis ausgewählt")
+            # Benutzer hat Abbrechen gedrückt
+            self.logger.warning("⚠ Kein Projektverzeichnis ausgewählt")
 
     def set_setup_controls_enabled(self, enabled: bool):
         """
-        Aktiviert oder deaktiviert Setup-Eingabefelder.
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  GUI-STEUERELEMENTE AKTIVIEREN/DEAKTIVIEREN                   ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Sperrt oder entsperrt Eingabefelder und Buttons während Messung.
+
+        FUNKTION:
+        ---------
+        Diese Funktion aktiviert oder deaktiviert alle Parameter-Eingabefelder
+        und Setup-Buttons. Sie verhindert, dass während einer laufenden Messung
+        kritische Einstellungen geändert werden können.
+
+        WARUM WICHTIG:
+        --------------
+        Während einer Messung dürfen folgende Dinge NICHT geändert werden:
+        - Max Angle, Max Torque, Max Velocity (Mess-Parameter)
+        - Projektordner (Speicherort)
+        - Sample-Name (Dateiname)
+        - Hardware-Buttons (würde Messung stören)
+
+        BETROFFENE GUI-ELEMENTE:
+        ------------------------
+        ✓ Alle GroupBoxen mit "setup" im Namen
+        ✓ Parameter-Felder (max_angle, max_torque, max_velocity)
+        ✓ Buttons:
+          - Select Project Directory
+          - Start Measurement
+          - Activate/Deactivate Hardware
+          - Home Position
+          - Measure (manuell)
+        ✓ Sample-Name Eingabefeld
+
+        AUSNAHME:
+        ---------
+        Der "Stop Measurement" Button bleibt IMMER aktiviert!
+        (sonst könnte die Messung nicht mehr gestoppt werden)
+
+        VERWENDUNG:
+        -----------
+        enabled=False → Während Messung läuft (Felder gesperrt)
+        enabled=True  → Nach Messung oder bei Fehler (Felder entsperrt)
+
+        BEISPIEL:
+        ---------
+        Benutzer startet Messung:
+          → set_setup_controls_enabled(False)
+          → Alle Parameter-Felder grau (deaktiviert)
+          → Nur "Stop Measurement" Button verfügbar
+
+        Messung stoppt:
+          → set_setup_controls_enabled(True)
+          → Alle Felder wieder normal (aktiviert)
+          → Benutzer kann neue Parameter eingeben
+
+        PARAMETER:
+        ----------
+        enabled : bool
+            True = Steuerelemente aktivieren (normal bedienbar)
+            False = Steuerelemente deaktivieren (gesperrt)
+
+        AUFRUF:
+        -------
+        - start_measurement() → enabled=False
+        - stop_measurement() → enabled=True
+        - deactivate_hardware() → enabled=True
         """
         try:
-            setup_widgets = []
+            setup_widgets = []  # Liste für alle zu steuernden Widgets
 
-            # Suche GroupBoxen mit "setup" im Namen
+            # ─────────────────────────────────────────────
+            # 1. SUCHE ALLE SETUP-GROUPBOXEN
+            # ─────────────────────────────────────────────
             for group_box in self.findChildren(QGroupBox):
+                # Prüfe ob GroupBox ein Setup-Element ist
                 if "setup" in group_box.objectName().lower() or "Setup" in group_box.title():
                     setup_widgets.append(group_box)
+                    # Füge auch alle Kinder-Widgets hinzu
                     for widget in group_box.findChildren(QtWidgets.QWidget):
                         setup_widgets.append(widget)
 
-            # Spezifische Widgets
+            # ─────────────────────────────────────────────
+            # 2. SPEZIFISCHE STEUERELEMENTE HINZUFÜGEN
+            # ─────────────────────────────────────────────
             control_widgets = [
-                getattr(self, "max_angle", None),
-                getattr(self, "max_torque", None),
-                getattr(self, "max_velocity", None),
-                getattr(self, "btn_select_proj_folder", None),
-                getattr(self, "start_meas_btn", None),
-                getattr(self, "manual_trig_btn", None),
-                getattr(self, "activate_hardware_btn", None),
-                getattr(self, "deactivate_hardware_btn", None),
-                getattr(self, "home_pos_btn", None),
-                getattr(self, "smp_name", None),
+                getattr(self, "max_angle", None),  # Max Angle Feld
+                getattr(self, "max_torque", None),  # Max Torque Feld
+                getattr(self, "max_velocity", None),  # Max Velocity Feld
+                getattr(self, "btn_select_proj_folder", None),  # Ordner-Button
+                getattr(self, "start_meas_btn", None),  # Start Button
+                getattr(self, "manual_trig_btn", None),  # Measure Button
+                getattr(self, "activate_hardware_btn", None),  # Activate Button
+                getattr(self, "deactivate_hardware_btn", None),  # Deactivate Button
+                getattr(self, "home_pos_btn", None),  # Home Button
+                getattr(self, "smp_name", None),  # Sample-Name Feld
             ]
 
+            # ─────────────────────────────────────────────
+            # 3. ALLE WIDGETS AKTIVIEREN/DEAKTIVIEREN
+            # ─────────────────────────────────────────────
             all_widgets = setup_widgets + control_widgets
             for widget in all_widgets:
-                if widget is not None:
-                    widget.setEnabled(enabled)
+                if widget is not None:  # Nur wenn Widget existiert
+                    widget.setEnabled(enabled)  # True=aktiviert, False=deaktiviert
 
-            # Stop Button immer verfügbar
+            # ─────────────────────────────────────────────
+            # 4. STOP-BUTTON IMMER VERFÜGBAR HALTEN
+            # ─────────────────────────────────────────────
             if hasattr(self, "stop_meas_btn"):
-                self.stop_meas_btn.setEnabled(True)
+                self.stop_meas_btn.setEnabled(True)  # Immer aktiviert!
 
-            action_text = "enabled" if enabled else "disabled"
-            self.logger.info(f"Setup controls {action_text}")
+            # ─────────────────────────────────────────────
+            # 5. ERFOLG LOGGEN
+            # ─────────────────────────────────────────────
+            action_text = "aktiviert" if enabled else "deaktiviert"
+            self.logger.info(f"✓ Setup-Steuerelemente {action_text}")
 
         except Exception as e:
-            self.logger.error(f"Fehler beim Setzen der Control-Zustände: {e}")
+            # Fehlerbehandlung (sollte nicht auftreten)
+            self.logger.error(f"✗ Fehler beim Setzen der Control-Zustände: {e}")
 
     def reset_graph_data(self):
-        """Setzt die Graph-Daten zurück."""
-        self.torque_data = []
-        self.angle_data = []
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  GRAPH-DATEN ZURÜCKSETZEN                                     ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Löscht alle Datenpunkte aus dem Torque vs. Angle Graphen.
+
+        FUNKTION:
+        ---------
+        Diese Funktion leert die Listen mit Messdaten und entfernt
+        alle Punkte aus dem Live-Graphen. Sie wird vor jeder neuen
+        Messung aufgerufen, um alte Daten zu löschen.
+
+        WAS WIRD GELÖSCHT:
+        ------------------
+        - self.torque_data: Liste mit allen Drehmoment-Werten [Nm]
+        - self.angle_data: Liste mit allen Winkel-Werten [°]
+        - Graph-Kurve: Alle visuellen Datenpunkte im Plot
+
+        WANN AUFRUFEN:
+        --------------
+        - Vor Start einer neuen Messung (start_measurement)
+        - Nach Hardware-Deaktivierung (optional)
+        - Bei manueller Zurücksetzung durch Benutzer
+
+        BEISPIEL:
+        ---------
+        Erste Messung:
+          torque_data = [0.5, 1.2, 2.3, 5.1, ...]
+          angle_data = [10, 20, 30, 40, ...]
+          → Graph zeigt Kurve mit vielen Punkten
+
+        reset_graph_data() wird aufgerufen:
+          torque_data = []  (leer)
+          angle_data = []   (leer)
+          → Graph ist leer (keine Punkte)
+
+        Zweite Messung:
+          torque_data = [0.3, 0.8, ...]  (neu beginnend)
+          → Graph zeigt nur neue Kurve (alte weg)
+
+        WICHTIG:
+        --------
+        Diese Funktion löscht NUR die Anzeige-Daten im Programm!
+        Bereits gespeicherte Messdaten in Dateien bleiben erhalten.
+
+        AUFRUF:
+        -------
+        Automatisch durch start_measurement()
+        """
+        # Listen leeren
+        self.torque_data = []  # Alle Torque-Werte löschen
+        self.angle_data = []  # Alle Angle-Werte löschen
+
+        # Graph aktualisieren (leere Kurve anzeigen)
         if hasattr(self, "torque_curve"):
-            self.torque_curve.setData([], [])
-        self.logger.info("Graph-Daten zurückgesetzt")
+            self.torque_curve.setData([], [])  # Leere Listen → Graph leer
+
+        self.logger.info("✓ Graph-Daten zurückgesetzt")
 
     # ---------- Hardware Funktionen ----------
 
@@ -1749,82 +1939,258 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Fehler", f"Hardware-Aktivierung fehlgeschlagen:\n\n{error_text}")
 
     def deactivate_hardware(self) -> None:
-        """Deaktiviert alle Hardware-Komponenten."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  HARDWARE DEAKTIVIEREN - Sichere Trennung aller Verbindungen ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Trennt die Verbindung zur Hardware und gibt Ressourcen frei.
+
+        FUNKTION:
+        ---------
+        Diese Funktion ist das Gegenstück zu activate_hardware() und
+        führt ein sauberes Herunterfahren der Hardware durch:
+        1. NI-6000 DAQ Task schließen
+        2. Motor-Controller Verbindung trennen
+        3. Status-Flags zurücksetzen
+        4. LEDs auf ROT setzen
+        5. GUI-Steuerelemente wieder aktivieren
+
+        WANN AUFRUFEN:
+        --------------
+        - Nach Abschluss aller Messungen (manuell via Button)
+        - Vor Programmende (automatisch durch closeEvent)
+        - Bei Hardware-Fehlern (zur Neuinitialisierung)
+        - Beim Wechsel der Hardware-Konfiguration
+
+        ABLAUF:
+        -------
+        Schritt 1: Prüfe ob Hardware überhaupt initialisiert ist
+        Schritt 2: Setze Warte-Cursor (Sanduhr)
+        Schritt 3: Schließe NI-6000 DAQ Task
+                   - Stoppt alle laufenden Messungen
+                   - Gibt DAQ-Ressourcen frei
+        Schritt 4: Trenne Motor-Controller
+                   - Stoppt Motor (falls noch aktiv)
+                   - Schließt CAN-Bus oder RS485 Verbindung
+        Schritt 5: Setze Status-Flags zurück
+                   - are_instruments_initialized = False
+                   - is_process_running = False
+        Schritt 6: Aktiviere GUI-Steuerelemente wieder
+        Schritt 7: Setze LEDs auf ROT (Hardware inaktiv)
+
+        STATUS-LEDs NACH DEAKTIVIERUNG:
+        --------------------------------
+        🔴 dmm_led (DAQ): ROT = NI-6000 getrennt
+        🔴 controller_led (Motor): ROT = Motor getrennt
+
+        WICHTIG:
+        --------
+        - Diese Funktion ist SICHER: Kann mehrfach aufgerufen werden
+        - Fehler beim Trennen werden geloggt, aber nicht kritisch
+        - Hardware-Objekte werden auf None gesetzt
+        - Danach muss activate_hardware() erneut aufgerufen werden
+
+        FEHLERBEHANDLUNG:
+        -----------------
+        Wenn Hardware bereits deaktiviert:
+          → Warnung im Log, keine Aktion
+
+        Wenn Trennung fehlschlägt:
+          → Fehler wird geloggt
+          → Trotzdem weitermachen mit nächstem Schritt
+          → Objekt wird auf None gesetzt
+
+        AUFRUF:
+        -------
+        - Button "Deactivate Hardware" in GUI
+        - Automatisch durch closeEvent() beim Programmende
+        """
+        # Sicherheitsprüfung: Ist Hardware überhaupt initialisiert?
         if not self.are_instruments_initialized:
-            self.logger.warning("Hardware ist nicht initialisiert")
+            self.logger.warning("⚠ Hardware ist nicht initialisiert - keine Aktion nötig")
             return
 
+        # Warte-Cursor anzeigen während Trennung läuft
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        self.logger.info("Deaktiviere Hardware...")
+        self.logger.info("=" * 60)
+        self.logger.info("HARDWARE DEAKTIVIERUNG GESTARTET")
+        self.logger.info("=" * 60)
 
-        # DAQmx Task schließen
+        # ═══════════════════════════════════════════════════════════
+        # TEIL 1: NI-6000 DAQ TASK SCHLIESSEN
+        # ═══════════════════════════════════════════════════════════
         if hasattr(self, "nidaqmx_task") and self.nidaqmx_task:
-            self.logger.info("Schließe NI-6000 DAQ Task")
+            self.logger.info("→ Schließe NI-6000 DAQ Task")
             try:
-                self.nidaqmx_task.close_nidaqmx_task()
-                self.logger.info("✓ NI-6000 DAQ Task geschlossen")
+                self.nidaqmx_task.close_nidaqmx_task()  # Task beenden
+                self.logger.info("✓ NI-6000 DAQ Task erfolgreich geschlossen")
             except Exception as e:
+                # Fehler beim Schließen (nicht kritisch)
                 self.logger.error(f"✗ Fehler beim Schließen der DAQ Task: {e}")
-            self.nidaqmx_task = None
+            self.nidaqmx_task = None  # Objekt auf None setzen
 
-        # Motor-Controller trennen
+        # ═══════════════════════════════════════════════════════════
+        # TEIL 2: MOTOR-CONTROLLER TRENNEN
+        # ═══════════════════════════════════════════════════════════
         if hasattr(self, "motor_controller") and self.motor_controller:
-            self.logger.info("Trenne N5 Nanotec Controller")
+            motor_type = MOTOR_TYPE.upper()
+            self.logger.info(f"→ Trenne {motor_type} Motor-Controller")
             try:
-                self.motor_controller.disconnect()
-                self.logger.info("✓ N5 Nanotec Controller getrennt")
+                self.motor_controller.disconnect()  # Verbindung trennen
+                self.logger.info(f"✓ {motor_type} Motor-Controller erfolgreich getrennt")
             except Exception as e:
+                # Fehler beim Trennen (nicht kritisch)
                 self.logger.error(f"✗ Fehler beim Trennen des Controllers: {e}")
-            self.motor_controller = None
+            self.motor_controller = None  # Objekt auf None setzen
 
-        # Flags zurücksetzen
-        self.are_instruments_initialized = False
-        self.is_process_running = False
+        # ═══════════════════════════════════════════════════════════
+        # TEIL 3: STATUS-FLAGS ZURÜCKSETZEN
+        # ═══════════════════════════════════════════════════════════
+        self.are_instruments_initialized = False  # Hardware nicht mehr bereit
+        self.is_process_running = False  # Messung gestoppt
 
-        # Setup-Steuerelemente wieder aktivieren
-        self.set_setup_controls_enabled(True)
+        # ═══════════════════════════════════════════════════════════
+        # TEIL 4: GUI-STEUERELEMENTE WIEDER AKTIVIEREN
+        # ═══════════════════════════════════════════════════════════
+        self.set_setup_controls_enabled(True)  # Alle Felder wieder bedienbar
 
-        # LED-Status aktualisieren
+        # ═══════════════════════════════════════════════════════════
+        # TEIL 5: LED-STATUS AKTUALISIEREN (ROT = Inaktiv)
+        # ═══════════════════════════════════════════════════════════
         self.dmm_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
         self.controller_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
+        # Warte-Cursor zurücksetzen
         QtWidgets.QApplication.restoreOverrideCursor()
+
         self.logger.info("✓ Hardware erfolgreich deaktiviert")
+        self.logger.info("=" * 60)
 
     def home_position(self) -> None:
-        """Fährt den Motor in die Home-Position und kalibriert Nullpunkt."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  HOME-POSITION - Nullpunkt-Kalibrierung                       ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Fährt Motor auf 0° Position und kalibriert alle Sensoren.
+
+        FUNKTION:
+        ---------
+        Diese Funktion setzt das gesamte System auf eine definierte
+        Ausgangsposition zurück. Sie ist wichtig für reproduzierbare
+        Messungen und korrekte Winkelmessung.
+
+        ABLAUF:
+        -------
+        1. Sicherheitsprüfungen:
+           - Hardware initialisiert?
+           - Keine Messung läuft?
+
+        2. Motor in Home-Position fahren:
+           - Fährt Motor auf 0° (Referenzposition)
+           - Nur bei Nanotec/Trinamic mit Homing-Funktion
+
+        3. Torque-Nullpunkt kalibrieren:
+           - Liest aktuellen Torque-Wert
+           - Speichert als Offset (Nullpunkt)
+           - Alle folgenden Messungen werden korrigiert
+
+        4. Winkel-Unwrap zurücksetzen:
+           - turn_counter = 0
+           - prev_angle_deg = 0
+           - angle_continuous_deg = 0
+
+        WARUM WICHTIG:
+        --------------
+        Vor jeder Messung sollte Home-Position aufgerufen werden:
+        ✓ Motor startet von definierter Position (0°)
+        ✓ Torque-Sensor hat korrekten Nullpunkt (keine Vorspannung)
+        ✓ Unwrap-Logik beginnt von Neuem (keine Altdaten)
+        ✓ Reproduzierbare Messergebnisse garantiert
+
+        BEISPIEL:
+        ---------
+        Ohne Home-Position:
+          Start-Winkel: 127° (zufällig wo Motor steht)
+          Torque-Offset: +0.5 Nm (Sensor-Vorspannung)
+          → Messung beginnt nicht bei 0°
+          → Torque-Werte haben systematischen Fehler
+
+        Mit Home-Position:
+          Start-Winkel: 0° (definiert)
+          Torque-Offset: 0 Nm (kalibriert)
+          → Messung beginnt sauber bei 0°
+          → Torque-Werte sind korrekt
+
+        FEHLERBEHANDLUNG:
+        -----------------
+        - Hardware nicht initialisiert → Warnung + Abbruch
+        - Messung läuft → Warnung + Abbruch
+        - Motor-Homing fehlgeschlagen → Fehler-Dialog
+
+        WICHTIG:
+        --------
+        Diese Funktion ist OPTIONAL aber EMPFOHLEN!
+        Sie kann jederzeit aufgerufen werden (außer während Messung).
+
+        AUFRUF:
+        -------
+        Button "Home Position" in GUI
+        """
+        # ─────────────────────────────────────────────
+        # SICHERHEITSPRÜFUNG 1: Hardware initialisiert?
+        # ─────────────────────────────────────────────
         if not self.are_instruments_initialized:
-            self.logger.warning("Hardware nicht initialisiert. Bitte zuerst Hardware aktivieren.")
+            self.logger.warning("⚠ Hardware nicht initialisiert. Bitte zuerst Hardware aktivieren.")
             QMessageBox.warning(self, "Warnung", "Hardware nicht initialisiert.\nBitte zuerst 'Activate Hardware' drücken.")
             return
 
+        # ─────────────────────────────────────────────
+        # SICHERHEITSPRÜFUNG 2: Keine Messung aktiv?
+        # ─────────────────────────────────────────────
         if self.is_process_running:
-            self.logger.warning("Home Position nicht möglich während Messung läuft")
+            self.logger.warning("⚠ Home Position nicht möglich während Messung läuft")
             QMessageBox.warning(self, "Warnung", "Home Position nicht möglich während Messung läuft.")
             return
 
-        self.logger.info("Fahre in Home-Position und kalibriere Nullpunkt...")
+        self.logger.info("=" * 60)
+        self.logger.info("HOME-POSITION & KALIBRIERUNG")
+        self.logger.info("=" * 60)
 
-        # Motor in Home-Position fahren (nur für Motor-Steuerung relevant)
+        # ═══════════════════════════════════════════════════════════
+        # SCHRITT 1: MOTOR IN HOME-POSITION FAHREN
+        # ═══════════════════════════════════════════════════════════
         if self.motor_controller and self.motor_controller.is_connected:
+            self.logger.info("→ Fahre Motor in Home-Position...")
             if self.motor_controller.home_position():
-                self.logger.info("✓ Motor in Home-Position (0°)")
+                self.logger.info("✓ Motor erfolgreich in Home-Position (0°)")
             else:
+                # Homing fehlgeschlagen (kritischer Fehler)
                 self.logger.error("✗ Motor-Homing fehlgeschlagen")
                 QMessageBox.critical(self, "Fehler", "Motor-Homing fehlgeschlagen")
                 return
         else:
-            self.logger.warning("Motor-Controller nicht verfügbar")
+            self.logger.warning("⚠ Motor-Controller nicht verfügbar - Home-Position übersprungen")
 
-        # Torque-Nullpunkt kalibrieren
+        # ═══════════════════════════════════════════════════════════
+        # SCHRITT 2: TORQUE-NULLPUNKT KALIBRIEREN
+        # ═══════════════════════════════════════════════════════════
         if self.nidaqmx_task:
+            self.logger.info("→ Kalibriere Torque-Nullpunkt...")
             self.nidaqmx_task.calibrate_zero()
-            self.logger.info("✓ Torque-Nullpunkt kalibriert")
+            self.logger.info("✓ Torque-Nullpunkt kalibriert (Sensor-Offset gespeichert)")
 
-        # Winkel-Unwrap zurücksetzen (für Single-Turn Modus)
+        # ═══════════════════════════════════════════════════════════
+        # SCHRITT 3: WINKEL-UNWRAP ZURÜCKSETZEN
+        # ═══════════════════════════════════════════════════════════
         self.reset_angle_unwrap()
 
-        self.logger.info("✓ Home-Position und Kalibrierung erfolgreich")
+        # ═══════════════════════════════════════════════════════════
+        # ERFOLG MELDEN
+        # ═══════════════════════════════════════════════════════════
+        self.logger.info("✓ Home-Position und Kalibrierung erfolgreich abgeschlossen")
+        self.logger.info("=" * 60)
         QMessageBox.information(self, "Erfolg", "Home-Position erreicht und Nullpunkt kalibriert!")
 
     def measure_manual(self) -> None:
@@ -1879,7 +2245,100 @@ class MainWindow(QMainWindow):
     # ---------- Measurement Funktionen ----------
 
     def start_measurement(self) -> None:
-        """Startet die Messung."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  MESSUNG STARTEN                                              ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Startet eine automatische Torsionsmessung.
+
+        FUNKTION:
+        ---------
+        Diese Funktion startet den kompletten Mess-Ablauf:
+        1. Validierung (Hardware bereit? Bereits laufend?)
+        2. Messordner und Datei erstellen
+        3. Motor mit eingestellter Geschwindigkeit starten
+        4. Timer für periodische Messungen starten (alle 100ms)
+        5. GUI aktualisieren (LED, Controls)
+
+        VORAUSSETZUNGEN:
+        ----------------
+        ✓ Hardware muss initialisiert sein (Activate Hardware)
+        ✓ Projektverzeichnis muss gewählt sein
+        ✓ Sample-Name muss gesetzt sein
+        ✓ Keine andere Messung darf laufen
+
+        ABLAUF (12 SCHRITTE):
+        ---------------------
+        1. Prüfe ob bereits Messung läuft → Abbruch
+        2. Prüfe ob Hardware bereit → Fehlermeldung
+        3. Parameter auslesen (max_angle, max_torque, max_velocity)
+        4. Startzeit speichern (für Zeitstempel in Daten)
+        5. Winkel-Unwrap zurücksetzen (turn_counter = 0)
+        6. Messordner + Datei erstellen mit Header
+        7. Motor starten (kontinuierliche Bewegung)
+        8. Measurement Timer starten (ruft measure() alle 100ms auf)
+        9. Graph-Daten löschen (alte Kurve entfernen)
+        10. Status setzen (is_process_running = True)
+        11. LED auf GRÜN setzen (zeigt laufende Messung)
+        12. Setup-Controls deaktivieren (Parameter nicht änderbar)
+
+        MESS-PARAMETER:
+        ---------------
+        - Max Angle: Abbruch wenn Winkel erreicht (z.B. 360°)
+        - Max Torque: Abbruch wenn Drehmoment erreicht (z.B. 15 Nm)
+        - Max Velocity: Motor-Geschwindigkeit (z.B. 10°/s)
+
+        BEISPIEL-ABLAUF:
+        ----------------
+        Benutzer klickt "Start Measurement":
+          1. Hardware-Check: ✓ OK
+          2. Ordner erstellt: "20251027_143000_Probe001/"
+          3. Datei erstellt: "20251027_143000_Probe001_DATA.txt"
+          4. Motor dreht mit 10°/s im Uhrzeigersinn
+          5. Timer startet → measure() wird alle 100ms aufgerufen
+          6. LED leuchtet GRÜN
+          7. Parameter-Felder gesperrt
+          → Messung läuft...
+
+        STOP-BEDINGUNGEN:
+        -----------------
+        Messung stoppt automatisch bei:
+        - Max Angle erreicht
+        - Max Torque erreicht
+        - Benutzer drückt "Stop Measurement"
+        - Hardware-Fehler
+
+        FEHLERBEHANDLUNG:
+        -----------------
+        Fehler | Reaktion
+        -------|--------------------------------------------------
+        Messung läuft bereits | Warnung im Log, Abbruch
+        Hardware nicht bereit | Fehlerdialog, Abbruch
+        Ordner-Erstellung fehl| Fehlerdialog, Abbruch
+        Motor-Start fehlschläg| Fehlerdialog, Abbruch
+
+        GUI-ÄNDERUNGEN:
+        ---------------
+        - LED: ROT → GRÜN (Messung läuft)
+        - Parameter-Felder: Aktiv → Gesperrt (grau)
+        - Start Button: Aktiv → Gesperrt
+        - Stop Button: Gesperrt → Aktiv (einziger Button)
+
+        WICHTIG FÜR TECHNIKER:
+        ----------------------
+        - Während Messung KEINE Parameter ändern!
+        - Zum Stoppen nur "Stop Measurement" Button nutzen
+        - Nach Stopp automatisch zurück zu Setup-Modus
+        - Daten werden kontinuierlich in Datei geschrieben
+
+        AUFRUF:
+        -------
+        Button "Start Measurement" in GUI
+        """
+        # ═════════════════════════════════════════════
+        # 1. PRÜFE OB MESSUNG BEREITS LÄUFT
+        # ═════════════════════════════════════════════
         if self.is_process_running:
             self.logger.warning("Messung läuft bereits")
             return
@@ -1941,7 +2400,92 @@ class MainWindow(QMainWindow):
         self.logger.info("✓ Messung erfolgreich gestartet")
 
     def stop_measurement(self) -> None:
-        """Stoppt die laufende Messung."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  MESSUNG STOPPEN                                              ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Stoppt eine laufende Messung sicher und ordentlich.
+
+        FUNKTION:
+        ---------
+        Beendet die aktuelle Messung und setzt alle Systeme in den
+        Bereitschafts-Zustand zurück. Motor wird gestoppt, Timer
+        deaktiviert, GUI entsperrt.
+
+        ABLAUF (7 SCHRITTE):
+        --------------------
+        1. Prüfe ob Messung läuft → sonst Abbruch
+        2. Measurement Timer stoppen (keine neuen measure() Aufrufe)
+        3. Motor stoppen (Bewegung anhalten)
+        4. Status zurücksetzen (is_process_running = False)
+        5. LED auf ROT setzen (zeigt keine Messung)
+        6. Setup-Controls aktivieren (Parameter wieder änderbar)
+        7. Startzeit zurücksetzen (für nächste Messung)
+
+        WARUM WICHTIG:
+        --------------
+        Ohne ordentliches Stoppen würde:
+        - Motor weiterlaufen (Gefahr!)
+        - Timer weiterlaufen (unnötige CPU-Last)
+        - GUI gesperrt bleiben (keine neue Messung möglich)
+        - Messdatei offen bleiben (Datenverlust-Risiko)
+
+        WAS WIRD GESTOPPT:
+        ------------------
+        ✓ Measurement Timer (kein measure() mehr)
+        ✓ Motor-Bewegung (Stillstand)
+        ✓ Datenerfassung (keine neuen Messpunkte)
+
+        WAS BLEIBT ERHALTEN:
+        --------------------
+        ✓ Hardware-Verbindungen (DAQ, Motor bleiben connected)
+        ✓ Gespeicherte Messdaten (Datei bleibt erhalten)
+        ✓ Graph-Anzeige (Kurve bleibt sichtbar)
+        ✓ Projekt-Einstellungen (Ordner, Sample-Name)
+
+        BEISPIEL:
+        ---------
+        Während Messung läuft:
+          Motor dreht, Timer läuft, LED=GRÜN, Felder gesperrt
+
+        Benutzer klickt "Stop Measurement":
+          1. Timer gestoppt → measure() wird nicht mehr aufgerufen
+          2. Motor gestoppt → Bewegung stoppt sofort
+          3. LED wird ROT → zeigt "keine Messung"
+          4. Felder entsperrt → Benutzer kann Parameter ändern
+          → Bereit für neue Messung!
+
+        AUTOMATISCHE STOPS:
+        -------------------
+        Diese Funktion wird auch automatisch aufgerufen bei:
+        - Max Angle erreicht (in measure() erkannt)
+        - Max Torque erreicht (in measure() erkannt)
+        - Hardware-Fehler während Messung
+
+        GUI-ÄNDERUNGEN:
+        ---------------
+        - LED: GRÜN → ROT (Messung gestoppt)
+        - Parameter-Felder: Gesperrt → Aktiv (wieder editierbar)
+        - Start Button: Gesperrt → Aktiv
+        - Stop Button: Aktiv → Gesperrt
+
+        SICHERHEIT:
+        -----------
+        - Motor wird IMMER gestoppt (auch bei Fehler)
+        - Timer wird IMMER gestoppt
+        - GUI wird IMMER entsperrt
+        → Kein "eingefrorener" Zustand möglich
+
+        AUFRUF:
+        -------
+        - Button "Stop Measurement" in GUI
+        - Automatisch in measure() bei Grenzwert-Erreichen
+        - Automatisch in closeEvent() beim Programm-Beenden
+        """
+        # ═════════════════════════════════════════════
+        # 1. PRÜFE OB MESSUNG LÄUFT
+        # ═════════════════════════════════════════════
         if not self.is_process_running:
             self.logger.warning("Keine Messung läuft")
             return
@@ -1973,7 +2517,80 @@ class MainWindow(QMainWindow):
         self.logger.info("✓ Messung erfolgreich gestoppt")
 
     def setup_measurement_timer(self) -> None:
-        """Initialisiert und startet den Measurement Timer."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  MEASUREMENT TIMER INITIALISIEREN                             ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Erstellt und startet den Timer für periodische Messungen.
+
+        FUNKTION:
+        ---------
+        Richtet einen QTimer ein, der in regelmäßigen Abständen die
+        Messfunktion aufruft. Dies ermöglicht kontinuierliche Daten-
+        erfassung ohne Blockierung der GUI.
+
+        TIMER-KONFIGURATION:
+        --------------------
+        - Intervall: MEASUREMENT_INTERVAL (Standard: 100ms)
+        - Frequenz: 10 Hz (10 Messungen pro Sekunde)
+        - Funktion: self.measure() wird bei jedem Timeout aufgerufen
+        - Typ: Wiederkehrend (nicht einmalig)
+
+        ABLAUF:
+        -------
+        1. Stoppe alten Timer (falls vorhanden)
+        2. Erstelle neuen QTimer
+        3. Verbinde timeout Signal mit measure() Funktion
+        4. Starte Timer mit definiertem Intervall
+        5. Logge Erfolg
+
+        WARUM TIMER:
+        ------------
+        Ohne Timer müssten wir eine Schleife verwenden:
+          while measuring:
+              measure()
+              time.sleep(0.1)
+          → GUI würde "einfrieren" (nicht mehr reagieren)
+
+        Mit Timer:
+          Timer ruft measure() alle 100ms auf
+          → GUI bleibt reaktionsfähig
+          → Stop-Button funktioniert sofort
+          → Keine Blockierung
+
+        BEISPIEL ZEITABLAUF:
+        --------------------
+        Zeit    | Ereignis
+        --------|------------------------------------------
+        0.000s  | Timer startet
+        0.100s  | measure() aufgerufen (1. Messung)
+        0.200s  | measure() aufgerufen (2. Messung)
+        0.300s  | measure() aufgerufen (3. Messung)
+        ...     | ...
+        5.000s  | measure() aufgerufen (50. Messung)
+
+        WICHTIG:
+        --------
+        - Timer läuft bis stop_measurement() aufgerufen wird
+        - Jeder Aufruf dauert nur wenige Millisekunden
+        - Bei 100ms Intervall: maximal 10 Messungen/Sekunde
+        - Kürzeres Intervall → mehr Datenpunkte, höhere CPU-Last
+
+        PARAMETER (KONSTANTEN):
+        -----------------------
+        MEASUREMENT_INTERVAL : int
+            Zeit zwischen Messungen in Millisekunden
+            Standard: 100 (= 10 Hz)
+            Definiert oben in main.py
+
+        AUFRUF:
+        -------
+        Automatisch durch start_measurement()
+        """
+        # ─────────────────────────────────────────────
+        # 1. ALTEN TIMER STOPPEN (falls vorhanden)
+        # ─────────────────────────────────────────────
         if self.measurement_timer is not None:
             self.measurement_timer.stop()
 
@@ -1983,7 +2600,96 @@ class MainWindow(QMainWindow):
         self.logger.info(f"✓ Measurement Timer gestartet ({MEASUREMENT_INTERVAL}ms)")
 
     def create_measurement_folder(self) -> bool:
-        """Erstellt die Ordnerstruktur für eine neue Messung."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  MESSORDNER UND DATEI ERSTELLEN                               ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Erstellt Ordnerstruktur und Messdatei mit Header für neue Messung.
+
+        FUNKTION:
+        ---------
+        Bereitet die Speicherstruktur für eine neue Messung vor:
+        1. Eindeutigen Ordner erstellen (mit Zeitstempel)
+        2. Messdatei anlegen mit Header-Informationen
+        3. Spaltenüberschriften schreiben
+
+        ORDNER-NAMENSSCHEMA:
+        --------------------
+        Format: YYYYMMDD_HHMMSS_Probenname
+
+        Beispiele:
+          20251027_143000_Probe001
+          20251027_150530_Alu_6mm
+          20251028_091245_Stahl_Test
+
+        VOLLSTÄNDIGE STRUKTUR:
+        ----------------------
+        Projektverzeichnis/
+        └── 20251027_143000_Probe001/          ← Erstellt von dieser Funktion
+            └── 20251027_143000_Probe001_DATA.txt  ← Messdatei mit Header
+
+        DATEI-HEADER (3 Abschnitte):
+        ----------------------------
+        1. Kommentar-Zeilen (# am Anfang):
+           - Startzeitpunkt und Sample-Name
+           - Mess-Parameter (Max Angle, Torque, Velocity)
+           - Hardware-Konfiguration (Torque Scale, Intervall)
+
+        2. Spaltenüberschriften:
+           Time  Voltage  Torque  Angle
+
+        3. Einheiten:
+           [HH:mm:ss.f]  [V]  [Nm]  [°]
+
+        BEISPIEL-HEADER:
+        ----------------
+        # Measurement started: 2025-10-27 14:30:00 - Sample: Probe001
+        # Max Angle: 360° | Max Torque: 15 Nm | Max Velocity: 10°/s
+        # Torque Scale: 2 Nm/V | Interval: 100ms
+        Time            Voltage     Torque      Angle
+        [HH:mm:ss.f]    [V]         [Nm]        [°]
+        00:00:00.0      0.000000    0.000000    0.000000
+        00:00:00.1      0.125000    0.250000    1.234567
+        ...
+
+        ABLAUF (5 SCHRITTE):
+        --------------------
+        1. Validierung (Sample-Name + Projektordner gesetzt?)
+        2. Zeitstempel generieren (Datum + Uhrzeit)
+        3. Ordnername erstellen und Verzeichnis anlegen
+        4. Messdatei erstellen
+        5. Header und Spaltenüberschriften schreiben
+
+        FEHLERBEHANDLUNG:
+        -----------------
+        Fehler | Reaktion
+        -------|--------------------------------------------------
+        Kein Sample-Name | Fehlerdialog, return False
+        Kein Projektordner | Fehlerdialog, return False
+        Ordner existiert | Wird überschrieben (exist_ok=True)
+        Datei nicht erstellbar | Exception, Fehlerdialog, return False
+
+        WICHTIG:
+        --------
+        - Funktion MUSS vor Messbeginn aufgerufen werden
+        - Bei Fehler wird Messung NICHT gestartet (return False)
+        - Ordnername ist immer eindeutig (Zeitstempel auf Sekunde genau)
+        - Datei wird zum Schreiben vorbereitet (aber nicht offen gelassen)
+
+        RÜCKGABE:
+        ---------
+        bool
+            True = Ordner und Datei erfolgreich erstellt
+            False = Fehler aufgetreten
+
+        AUFRUF:
+        -------
+        Automatisch durch start_measurement()
+        """
+        # ═════════════════════════════════════════════
+        # 1. VALIDIERUNG
+        # ═════════════════════════════════════════════
         if not self.sample_name or not self.project_dir:
             self.logger.error("Sample-Name oder Projektverzeichnis nicht gesetzt")
             QMessageBox.critical(self, "Fehler", "Sample-Name oder Projektverzeichnis nicht gesetzt.")
@@ -2032,7 +2738,111 @@ class MainWindow(QMainWindow):
             return False
 
     def write_measurement_data(self, timestamp: str, voltage: float, torque: float, angle: float):
-        """Schreibt Messdaten in die Messdatei."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  MESSDATEN IN DATEI SCHREIBEN                                 ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Fügt eine neue Datenzeile zur Messdatei hinzu.
+
+        FUNKTION:
+        ---------
+        Schreibt einen einzelnen Messpunkt (Zeitstempel + Messwerte)
+        als neue Zeile in die aktuelle Messdatei. Wird bei jeder
+        Messung (alle 100ms) aufgerufen.
+
+        DATENFORMAT:
+        ------------
+        Jede Zeile enthält 4 Werte (Tab-getrennt):
+        Time         Voltage      Torque       Angle
+        00:00:00.0   0.125000     0.250000     1.234567
+        00:00:00.1   0.250000     0.500000     2.456789
+        ...
+
+        SPALTEN-BEDEUTUNG:
+        ------------------
+        1. Time: Verstrichene Zeit seit Messstart [HH:mm:ss.f]
+           Format: 00:00:00.0 (Stunden:Minuten:Sekunden.Zehntelsekunde)
+           Beispiel: 00:01:23.5 = 1 Minute, 23.5 Sekunden
+
+        2. Voltage: Rohe Spannung vom DAQ [V]
+           Bereich: ±10V (von DF-30 Drehmomentsensor)
+           Beispiel: 2.5V = halbe Skalenbreite
+
+        3. Torque: Berechnetes Drehmoment [Nm]
+           Formel: Voltage × TORQUE_SCALE
+           Beispiel: 2.5V × 2 Nm/V = 5 Nm
+
+        4. Angle: Kontinuierlicher Winkel [°]
+           Mit Unwrap-Logik (kann > 360° sein)
+           Beispiel: 450° = 1.25 Umdrehungen
+
+        ABLAUF:
+        -------
+        1. Prüfe ob Messordner und Dateiname existieren
+        2. Öffne Datei im Append-Modus ("a")
+        3. Formatiere Werte (6 Nachkommastellen)
+        4. Schreibe Zeile (Tab-getrennt)
+        5. Datei automatisch schließen (with-Statement)
+
+        BEISPIEL-DATENZEILE:
+        --------------------
+        Eingabe:
+          timestamp = "00:00:05.2"
+          voltage = 1.234567
+          torque = 2.469134
+          angle = 52.345678
+
+        Geschriebene Zeile:
+          00:00:05.2    1.234567    2.469134    52.345678
+
+        FEHLERBEHANDLUNG:
+        -----------------
+        Bei Fehler:
+        - Log-Warnung wird geschrieben
+        - return False (Messung läuft aber weiter!)
+        - Keine GUI-Fehlermeldung (würde Messung unterbrechen)
+
+        WARUM APPEND-MODUS:
+        -------------------
+        - Datei wird bei jedem Aufruf neu geöffnet und geschlossen
+        - Vorteil: Bei Programmabsturz bleiben Daten erhalten
+        - Nachteil: Etwas langsamer (aber bei 10 Hz kein Problem)
+        - Alternative (würde Daten riskieren):
+          * Datei offen lassen während Messung
+          * Bei Absturz: Daten im Buffer verloren!
+
+        WICHTIG:
+        --------
+        - Wird alle 100ms aufgerufen (10x pro Sekunde)
+        - Daten werden SOFORT geschrieben (kein großer Buffer)
+        - Tab-getrennt (TSV-Format, einfach in Excel zu öffnen)
+        - UTF-8 Encoding (unterstützt Umlaute in Kommentaren)
+
+        PARAMETER:
+        ----------
+        timestamp : str
+            Zeitstempel im Format "HH:MM:SS.f"
+        voltage : float
+            Rohe Spannung vom DAQ [V]
+        torque : float
+            Berechnetes Drehmoment [Nm]
+        angle : float
+            Kontinuierlicher Winkel [°]
+
+        RÜCKGABE:
+        ---------
+        bool
+            True = Erfolgreich geschrieben
+            False = Fehler aufgetreten
+
+        AUFRUF:
+        -------
+        Automatisch durch measure() bei jeder Messung
+        """
+        # ─────────────────────────────────────────────
+        # VALIDIERUNG: Datei vorhanden?
+        # ─────────────────────────────────────────────
         if not self.measurement_dir or not hasattr(self, "measurement_filename") or not self.measurement_filename:
             return False
 
@@ -2053,8 +2863,121 @@ class MainWindow(QMainWindow):
 
     def measure(self):
         """
-        Zentrale Messfunktion - wird vom Timer aufgerufen.
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  ZENTRALE MESSFUNKTION (HERZ DES PROGRAMMS)                   ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Führt eine einzelne Messung durch - wird alle 100ms vom Timer aufgerufen.
+
+        FUNKTION:
+        ---------
+        Dies ist die wichtigste Funktion des gesamten Programms!
+        Sie wird periodisch vom Measurement Timer aufgerufen und
+        koordiniert die komplette Datenerfassung.
+
+        ABLAUF (10 SCHRITTE):
+        ---------------------
+        1. Prüfe ob Messung läuft → sonst Abbruch
+        2. Zeitstempel berechnen (seit Messstart)
+        3. Winkel messen (DAQ oder Motor, je nach Konfiguration)
+        4. Unwrap-Logik anwenden (für kontinuierlichen Winkel)
+        5. Torque-Spannung vom DAQ lesen
+        6. Drehmoment berechnen (Spannung × Scale)
+        7. Daten zum Graph hinzufügen
+        8. Daten in Datei schreiben
+        9. GUI aktualisieren (Anzeige-Felder)
+        10. Stopbedingungen prüfen (Max Angle/Torque erreicht?)
+
+        MESS-QUELLEN (abhängig von ANGLE_MEASUREMENT_SOURCE):
+        ------------------------------------------------------
+        A) ANGLE_MEASUREMENT_SOURCE = "daq" (Standard V2.0):
+           - Winkel: NI-6000 DAQ Kanal ai1 (0-10V vom Motrona)
+           - Torque: NI-6000 DAQ Kanal ai0 (±10V vom DF-30)
+           - Vorteil: Echter Encoder-Winkel (unabhängig vom Motor)
+
+        B) ANGLE_MEASUREMENT_SOURCE = "motor" (Legacy V1.0):
+           - Winkel: Motor-Controller Position
+           - Torque: NI-6000 DAQ Kanal ai0
+           - Nachteil: Motor-Schritte nicht immer genau
+
+        ZEITSTEMPEL-BERECHNUNG:
+        -----------------------
+        Verstrichene Zeit seit start_time_timestamp:
+          elapsed = jetzt - start_time
+          Format: HH:MM:SS.f (Stunden:Minuten:Sekunden.Zehntelsekunde)
+          Beispiel: 00:01:23.5 = 1 Min 23.5 Sek seit Start
+
+        UNWRAP-LOGIK (Single-Turn Encoder):
+        -----------------------------------
+        Raw Encoder: 0-360° (springt bei 360° auf 0°)
+        Nach Unwrap: 0°, 361°, 720°, etc. (kontinuierlich)
+
+        Beispiel:
+          Zeit | Raw Angle | Unwrap Angle | Turns
+          -----|-----------|--------------|------
+          0.0s | 0°        | 0°           | 0
+          1.0s | 50°       | 50°          | 0
+          2.0s | 350°      | 350°         | 0
+          3.0s | 10°       | 370°         | 1  ← Wrap erkannt!
+          4.0s | 100°      | 460°         | 1
+
+        STOPBEDINGUNGEN:
+        ----------------
+        Messung stoppt automatisch wenn:
+        - |angle| >= |max_angle_value|
+          Beispiel: 360° erreicht bei max_angle=360°
+
+        - |torque| >= |max_torque_value|
+          Beispiel: 15 Nm erreicht bei max_torque=15 Nm
+
+        Bei Stopp:
+          1. Grund loggen (z.B. "Max Angle erreicht")
+          2. stop_measurement() aufrufen
+          3. Motor stoppt, Timer stoppt, GUI entsperrt
+
+        DATENFLUSS:
+        -----------
+        Hardware → measure() → Verarbeitung → 3 Ausgänge:
+          1. Graph: torque_data + angle_data → torque_curve.setData()
+          2. Datei: write_measurement_data() → .txt Datei
+          3. GUI: update_measurement_gui() → Anzeige-Felder
+
+        FEHLERBEHANDLUNG:
+        -----------------
+        Bei Hardware-Fehlern (DAQ lesen fehlschlägt):
+          - Warnung im Log
+          - Wert = 0.0 verwenden
+          - Messung läuft weiter (kein Abbruch)
+
+        PERFORMANCE:
+        ------------
+        - Aufruf: Alle 100ms (10 Hz)
+        - Dauer: <5ms (bei erfolgreicher Messung)
+        - CPU-Last: Gering (Timer ist non-blocking)
+
+        WICHTIG FÜR TECHNIKER:
+        ----------------------
+        - Diese Funktion läuft im "Hintergrund" während Messung
+        - Jeder Aufruf = 1 Datenpunkt in Datei + Graph
+        - Bei 100ms Intervall und 60s Messung = 600 Datenpunkte
+        - Änderungen hier betreffen ALLE Messungen!
+
+        DEBUGGING:
+        ----------
+        Wenn Messdaten falsch:
+        1. Prüfe TORQUE_SCALE (Spannung → Nm korrekt?)
+        2. Prüfe Unwrap-Logik (Winkel kontinuierlich?)
+        3. Prüfe DAQ-Kanäle (ai0=Torque, ai1=Angle?)
+        4. Logge Werte (self.logger.debug(f"V={voltage}, T={torque}"))
+
+        AUFRUF:
+        -------
+        Automatisch durch QTimer (setup_measurement_timer)
+        alle MEASUREMENT_INTERVAL Millisekunden (Standard: 100ms)
         """
+        # ═════════════════════════════════════════════
+        # 1. PRÜFE OB MESSUNG LÄUFT
+        # ═════════════════════════════════════════════
         if not self.is_process_running:
             return
 
@@ -2129,7 +3052,76 @@ class MainWindow(QMainWindow):
             self.stop_measurement()
 
     def update_measurement_gui(self, voltage: float, torque: float, angle: float):
-        """Aktualisiert die GUI-Anzeigen nach einer Messung."""
+        """
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║  GUI-MESSANZEIGEN AKTUALISIEREN                               ║
+        ╚═══════════════════════════════════════════════════════════════╝
+
+        Aktualisiert die numerischen Anzeige-Felder in der GUI.
+
+        FUNKTION:
+        ---------
+        Schreibt die aktuellen Messwerte in die drei Anzeige-Felder
+        der GUI. Diese Felder zeigen die LIVE-Werte während der Messung.
+
+        AKTUALISIERTE GUI-FELDER:
+        -------------------------
+        1. dmm_voltage (Voltage Display):
+           - Zeigt rohe Spannung vom DAQ [V]
+           - Format: 6 Nachkommastellen
+           - Beispiel: "2.345678 V"
+
+        2. force_meas (Torque Display):
+           - Zeigt berechnetes Drehmoment [Nm]
+           - Format: 6 Nachkommastellen
+           - Beispiel: "4.691356 Nm"
+
+        3. distance_meas (Angle Display):
+           - Zeigt kontinuierlichen Winkel [°]
+           - Format: 6 Nachkommastellen
+           - Beispiel: "123.456789 °"
+
+        WARUM 6 NACHKOMMASTELLEN:
+        -------------------------
+        - Hohe Präzision für wissenschaftliche Auswertung
+        - DAQ liefert bis zu 6 signifikante Stellen
+        - Für Anzeige könnten 2-3 Stellen reichen
+        - In Datei werden auch 6 Stellen gespeichert
+
+        AUFRUF-FREQUENZ:
+        ----------------
+        - Alle 100ms (10x pro Sekunde)
+        - Synchron mit measure() Funktion
+        - GUI bleibt flüssig (keine Blockierung)
+
+        BEISPIEL:
+        ---------
+        Während Messung läuft:
+          Zeit=0.0s: Voltage=0.000000, Torque=0.000000, Angle=0.000000
+          Zeit=0.1s: Voltage=0.125000, Torque=0.250000, Angle=1.234567
+          Zeit=0.2s: Voltage=0.250000, Torque=0.500000, Angle=2.456789
+          ...
+
+        PARAMETER:
+        ----------
+        voltage : float
+            Rohe Spannung vom DAQ [V]
+        torque : float
+            Berechnetes Drehmoment [Nm]
+        angle : float
+            Kontinuierlicher Winkel [°]
+
+        WICHTIG:
+        --------
+        - Nur Anzeige-Update (keine Berechnung hier)
+        - Sehr schnelle Funktion (<1ms)
+        - Bei 10 Hz kein Flackern sichtbar
+
+        AUFRUF:
+        -------
+        Automatisch durch measure() bei jeder Messung
+        """
+        # Voltage-Feld aktualisieren
         self.dmm_voltage.setText(f"{voltage:.6f}")
         self.force_meas.setText(f"{torque:.6f}")
         self.distance_meas.setText(f"{angle:.6f}")
