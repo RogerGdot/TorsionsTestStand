@@ -1908,9 +1908,7 @@ class MainWindow(QMainWindow):
             # Erfolgs-Dialog zusammenstellen
             success_message = "Hardware erfolgreich aktiviert!\n\n"
             success_message += "✓ NI-6000 DAQ (Torque + Angle)\n"
-            success_message += "✓ Motor-Controller\n"
-            if ANGLE_MEASUREMENT_SOURCE == "daq":
-                success_message += f"✓ SSI Encoder ({ANGLE_ENCODER_MODE} mode)"
+            success_message += "✓ Motor-Controller"
 
             QMessageBox.information(self, "Erfolg", success_message)
 
@@ -2993,10 +2991,37 @@ class MainWindow(QMainWindow):
         else:
             elapsed_time_str = "00:00:00.0"
 
-        # Winkel messen (abhängig von ANGLE_MEASUREMENT_SOURCE)
+        # ═════════════════════════════════════════════
+        # 3. WINKEL MESSEN
+        # ═════════════════════════════════════════════
         angle = 0.0
-        if ANGLE_MEASUREMENT_SOURCE == "daq":
-            # Winkel vom NI-6000 DAQ lesen (SSI Encoder via Motrona)
+
+        if DEMO_MODE:
+            # DEMO-MODUS: Simuliere Winkel basierend auf Geschwindigkeit und Zeit
+            # Berechne wie viel Zeit seit Messstart vergangen ist
+            if self.start_time_timestamp:
+                elapsed = datetime.now() - self.start_time_timestamp
+                elapsed_seconds = elapsed.total_seconds()
+
+                # Winkel = Geschwindigkeit × Zeit
+                # Beispiel: 10°/s × 5s = 50°
+                simulated_angle_raw = self.max_velocity_value * elapsed_seconds
+
+                # Aktualisiere Demo-Simulator (für Torque-Berechnung)
+                if self.nidaqmx_task and self.nidaqmx_task.demo_simulator:
+                    self.nidaqmx_task.demo_simulator.current_angle = simulated_angle_raw
+
+                # Bei Single-Turn Encoder: Wrap auf 0-360° und dann Unwrap
+                if ANGLE_ENCODER_MODE == "single_turn":
+                    # Simuliere Encoder-Verhalten: Nur 0-360° ausgeben
+                    angle_0_360 = simulated_angle_raw % 360.0
+                    angle = self.unwrap_angle(angle_0_360)  # Kontinuierlichen Winkel berechnen
+                else:
+                    # Multi-Turn: Direkter Winkel (kein Wrap)
+                    angle = simulated_angle_raw
+
+        elif ANGLE_MEASUREMENT_SOURCE == "daq":
+            # HARDWARE-MODUS: Winkel vom NI-6000 DAQ lesen (SSI Encoder via Motrona)
             try:
                 angle_voltage = self.nidaqmx_task.read_angle_voltage()
                 angle_0_360 = self.nidaqmx_task.scale_voltage_to_angle(angle_voltage)
@@ -3005,7 +3030,7 @@ class MainWindow(QMainWindow):
                 self.logger.warning(f"Fehler beim Lesen der Winkelspannung: {e}")
                 angle = 0.0
         else:
-            # Legacy: Position vom Motor-Controller lesen
+            # HARDWARE-MODUS: Legacy - Position vom Motor-Controller lesen
             if self.motor_controller and self.motor_controller.is_connected:
                 angle = self.motor_controller.get_position()
 
