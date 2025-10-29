@@ -181,3 +181,4 @@ This codebase was developed for educational purposes with extensive German comme
 Current branch: `main`
 
 Recent changes include refactoring hardware classes from `main.py` into separate modules (see [REFACTORING_NOTES.md](REFACTORING_NOTES.md)).
+- Keep the code simple and use comments to describe the process

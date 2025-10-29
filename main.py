@@ -4,7 +4,7 @@ Torsions Test Stand - Software für Torsionsprüfstand
 Projekt:    Torsions Test Stand
 Datei:      main.py
 Autor:      [Technikergruppe]
-Version:    2.0
+Version:    2.1
 Python:     3.13
 Datum:      Oktober 2025
 ------------------------------------------------------------------------------
@@ -137,8 +137,7 @@ from src.gui.stylesheet import get_dark_stylesheet
 from src.hardware import (
     DAQmxTask,
     MotorControllerBase,
-    NanotecMotorController,
-    TrinamicMotorController,
+    N6NanotecController,
 )
 from src.utils.logger_helper import GuiLogger, WrappingFormatter
 
@@ -156,38 +155,27 @@ TORQUE_SENSOR_MAX_NM = 20.0  # Maximales Drehmoment [Nm]
 TORQUE_SENSOR_MAX_VOLTAGE = 10.0  # Maximale Spannung [V]
 TORQUE_SCALE = TORQUE_SENSOR_MAX_NM / TORQUE_SENSOR_MAX_VOLTAGE  # 2.0 Nm/V
 
-# NI-6000 DAQ-Konfiguration
+# NI-6000 DAQ-Konfiguration (nur Drehmoment - Winkel wird vom N6 Controller gelesen)
 DAQ_CHANNEL_TORQUE = "Dev1/ai0"  # DAQ-Kanal für Drehmomentmessung
-DAQ_CHANNEL_ANGLE = "Dev1/ai1"  # DAQ-Kanal für Winkelmessung (SSI-Encoder via Motrona)
 DAQ_VOLTAGE_RANGE = 10.0  # ±10V Messbereich
 
-# SSI-Encoder & Motrona Konverter Konfiguration
-# Encoder: RS Components RSA 58E SSI (13 Bit Single-Turn, 12 Bit Multi-Turn)
-# Konverter: motrona 7386.5010 (SSI zu 0-10V Analog)
-ANGLE_MEASUREMENT_SOURCE = "daq"  # "daq" = NI-6000 Messung, "motor" = Motor-Controller (Legacy)
-ANGLE_ENCODER_MODE = "single_turn"  # "single_turn" = 0-360° mit Software-Unwrap, "multi_turn" = Multi-Turn (falls verfügbar)
-
-# Motrona Analog-Ausgang Mapping: 0V = 0°, 10V = 360°
-ANGLE_VOLTAGE_MIN = 0.0  # Minimale Spannung [V]
-ANGLE_VOLTAGE_MAX = 10.0  # Maximale Spannung [V]
-ANGLE_MIN_DEG = 0.0  # Minimaler Winkel [Grad]
-ANGLE_MAX_DEG = 360.0  # Maximaler Winkel [Grad]
+# SSI-Encoder Konfiguration (direkt am N6 Controller)
+# Encoder: RS Components RSA 58E SSI (13 Bit Single-Turn = 8192 counts/rev)
+# Der N6 Controller liest den SSI-Encoder intern und stellt die Position via Modbus bereit
+ANGLE_MEASUREMENT_SOURCE = "motor"  # Winkel wird vom N6 Controller gelesen (nicht mehr DAQ)
+ANGLE_ENCODER_MODE = "single_turn"  # "single_turn" = 0-360° mit Software-Unwrap, "multi_turn" = Multi-Turn
 ANGLE_WRAP_THRESHOLD = 180.0  # Schwellwert für Wrap-Detection [Grad]
 
 # Mess-Konfiguration
 MEASUREMENT_INTERVAL = 100  # Messintervall in Millisekunden (10 Hz = 100ms)
 DEFAULT_SAMPLE_NAME = "TorsionTest"  # Standard-Probenname
 
-# Motor-Controller Konfiguration
-# Wähle Motor-Typ: "nanotec" oder "trinamic"
-MOTOR_TYPE = "nanotec"  # "nanotec" = Nanotec mit NanoLib, "trinamic" = Trinamic Steprocker
-
-# Nanotec-spezifische Konfiguration
-NANOTEC_BUS_HARDWARE = "ixxat"  # Bus-Hardware: "ixxat", "kvaser", "socketcan"
-
-# Trinamic-spezifische Konfiguration
-TRINAMIC_COM_PORT = "COM3"  # COM-Port des Trinamic Steprocker
-TRINAMIC_MOTOR_ID = 0  # Motor ID
+# N6 Nanotec Motor-Controller Konfiguration
+# N6 Controller mit SSI-Encoder Closed-Loop über Modbus TCP
+N6_IP_ADDRESS = "192.168.0.100"  # IP-Adresse des N6 Controllers
+N6_MODBUS_PORT = 502  # Modbus TCP Port (Standard: 502)
+N6_SLAVE_ID = 1  # Modbus Slave ID (Standard: 1)
+N6_ENCODER_RESOLUTION = 8192  # SSI-Encoder Auflösung [counts/rev] (13-bit = 8192)
 
 # Motor-Parameter (Standardwerte)
 DEFAULT_MAX_ANGLE = 360.0  # Standard maximaler Winkel [Grad]
@@ -1803,23 +1791,18 @@ class MainWindow(QMainWindow):
         error_messages = []  # Sammelt alle Fehlermeldungen
 
         # ═══════════════════════════════════════════════════════════
-        # TEIL 1: NI-6000 DAQ INITIALISIEREN
+        # TEIL 1: NI-6000 DAQ INITIALISIEREN (nur Drehmoment)
         # ═══════════════════════════════════════════════════════════
         try:
             self.logger.info("→ Initialisiere NI-6000 DAQ...")
             self.logger.info(f"  Torque-Kanal: {DAQ_CHANNEL_TORQUE} (±10V)")
-            self.logger.info(f"  Angle-Kanal: {DAQ_CHANNEL_ANGLE} (0-10V)")
+            self.logger.info("  Angle wird vom N6 Controller gelesen (SSI-Encoder)")
 
-            # DAQmxTask Objekt erstellen mit allen Parametern
+            # DAQmxTask Objekt erstellen (nur Drehmoment, kein Winkel)
             self.nidaqmx_task = DAQmxTask(
                 torque_channel=DAQ_CHANNEL_TORQUE,  # z.B. "Dev1/ai0"
-                angle_channel=DAQ_CHANNEL_ANGLE,  # z.B. "Dev1/ai1"
                 voltage_range=DAQ_VOLTAGE_RANGE,  # ±10V
                 torque_scale=TORQUE_SCALE,  # 2.0 Nm/V
-                angle_voltage_min=ANGLE_VOLTAGE_MIN,  # 0V
-                angle_voltage_max=ANGLE_VOLTAGE_MAX,  # 10V
-                angle_min_deg=ANGLE_MIN_DEG,  # 0°
-                angle_max_deg=ANGLE_MAX_DEG,  # 360°
                 demo_mode=DEMO_MODE,  # True/False
             )
 
@@ -1831,7 +1814,7 @@ class MainWindow(QMainWindow):
                 self.logger.info("✓ NI-6000 DAQ erfolgreich initialisiert")
                 self.logger.info(f"  → Torque-Messbereich: ±{TORQUE_SENSOR_MAX_NM} Nm")
                 self.logger.info(f"  → Angle-Modus: {ANGLE_ENCODER_MODE.upper()}")
-                self.logger.info(f"  → Angle-Quelle: {ANGLE_MEASUREMENT_SOURCE.upper()}")
+                self.logger.info("  → Angle-Quelle: N6 Controller (SSI via Modbus)")
 
                 # LED auf GRÜN setzen (Erfolg)
                 self.dmm_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
@@ -1850,37 +1833,29 @@ class MainWindow(QMainWindow):
             self.dmm_led.setStyleSheet("background-color: red; border-radius: 12px; border: 2px solid black;")
 
         # ═══════════════════════════════════════════════════════════
-        # TEIL 2: MOTOR-CONTROLLER INITIALISIEREN
+        # TEIL 2: N6 MOTOR-CONTROLLER INITIALISIEREN (mit SSI-Encoder)
         # ═══════════════════════════════════════════════════════════
         try:
-            self.logger.info("→ Initialisiere Motor-Controller...")
-            self.logger.info(f"  Typ: {MOTOR_TYPE.upper()}")
+            self.logger.info("→ Initialisiere N6 Nanotec Motor-Controller...")
+            self.logger.info(f"  IP-Adresse: {N6_IP_ADDRESS}:{N6_MODBUS_PORT}")
+            self.logger.info(f"  SSI-Encoder: {N6_ENCODER_RESOLUTION} counts/rev")
 
-            # Motor-Controller Objekt erstellen (abhängig von MOTOR_TYPE)
-            if MOTOR_TYPE.lower() == "nanotec":
-                # Nanotec N5 mit CAN-Bus (IXXAT, Kvaser, etc.)
-                self.motor_controller = NanotecMotorController(
-                    bus_hardware=NANOTEC_BUS_HARDWARE,  # z.B. "ixxat"
-                    demo_mode=DEMO_MODE,
-                )
-                motor_name = "Nanotec N5 Motor"
+            # N6 Controller Objekt erstellen mit SSI-Encoder Konfiguration
+            self.motor_controller = N6NanotecController(
+                ip_address=N6_IP_ADDRESS,  # z.B. "192.168.0.100"
+                port=N6_MODBUS_PORT,  # 502 (Modbus TCP Standard)
+                slave_id=N6_SLAVE_ID,  # 1 (Standard)
+                demo_mode=DEMO_MODE,  # True/False
+                encoder_resolution=N6_ENCODER_RESOLUTION,  # 8192 counts/rev
+            )
+            motor_name = "Nanotec N6 Controller"
 
-            elif MOTOR_TYPE.lower() == "trinamic":
-                # Trinamic Steprocker mit RS485
-                self.motor_controller = TrinamicMotorController(
-                    port=TRINAMIC_COM_PORT,  # z.B. "COM3"
-                    motor_id=TRINAMIC_MOTOR_ID,  # Motor-ID (0-255)
-                    demo_mode=DEMO_MODE,
-                )
-                motor_name = "Trinamic Steprocker"
-
-            else:
-                # Unbekannter Motor-Typ in Konfiguration
-                raise ValueError(f"Unbekannter Motor-Typ: '{MOTOR_TYPE}' (erwartet: 'nanotec' oder 'trinamic')")
-
-            # Verbindung zum Motor herstellen
+            # Verbindung zum Motor herstellen und initialisieren
             if self.motor_controller.connect():
                 self.logger.info(f"✓ {motor_name} erfolgreich verbunden")
+                self.logger.info("  → Modbus TCP Kommunikation aktiv")
+                self.logger.info("  → SSI-Encoder Closed-Loop aktiv")
+                self.logger.info("  → Velocity Mode konfiguriert")
 
                 # LED auf GRÜN setzen (Erfolg)
                 self.controller_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
@@ -1914,8 +1889,8 @@ class MainWindow(QMainWindow):
 
             # Erfolgs-Dialog zusammenstellen
             success_message = "Hardware erfolgreich aktiviert!\n\n"
-            success_message += "✓ NI-6000 DAQ (Torque + Angle)\n"
-            success_message += "✓ Motor-Controller"
+            success_message += "✓ NI-6000 DAQ (Torque only)\n"
+            success_message += "✓ N6 Motor-Controller (SSI-Encoder für Angle)"
 
             QMessageBox.information(self, "Erfolg", success_message)
 
@@ -2039,11 +2014,10 @@ class MainWindow(QMainWindow):
         # TEIL 2: MOTOR-CONTROLLER TRENNEN
         # ═══════════════════════════════════════════════════════════
         if hasattr(self, "motor_controller") and self.motor_controller:
-            motor_type = MOTOR_TYPE.upper()
-            self.logger.info(f"→ Trenne {motor_type} Motor-Controller")
+            self.logger.info("→ Trenne N6 Nanotec Motor-Controller")
             try:
                 self.motor_controller.disconnect()  # Verbindung trennen
-                self.logger.info(f"✓ {motor_type} Motor-Controller erfolgreich getrennt")
+                self.logger.info("✓ N6 Nanotec Motor-Controller erfolgreich getrennt")
             except Exception as e:
                 # Fehler beim Trennen (nicht kritisch)
                 self.logger.error(f"✗ Fehler beim Trennen des Controllers: {e}")
@@ -3110,47 +3084,36 @@ class MainWindow(QMainWindow):
             elapsed_time_str = "00:00:00.0"
 
         # ═════════════════════════════════════════════
-        # 3. WINKEL MESSEN
+        # 3. WINKEL MESSEN (vom N6 Controller mit SSI-Encoder)
         # ═════════════════════════════════════════════
         angle = 0.0
 
-        if DEMO_MODE:
-            # DEMO-MODUS: Simuliere Winkel basierend auf Geschwindigkeit und Zeit
-            # Berechne wie viel Zeit seit Messstart vergangen ist
-            if self.start_time_timestamp:
-                elapsed = datetime.now() - self.start_time_timestamp
-                elapsed_seconds = elapsed.total_seconds()
+        # Winkel vom N6 Motor-Controller lesen (SSI-Encoder über Modbus)
+        # Der N6 liest den SSI-Encoder intern und stellt die Position bereit
+        if self.motor_controller and self.motor_controller.is_connected:
+            try:
+                # Position vom N6 auslesen (in Grad)
+                angle_raw = self.motor_controller.get_position()
 
-                # Winkel = Geschwindigkeit × Zeit
-                # Beispiel: 10°/s × 5s = 50°
-                simulated_angle_raw = self.max_velocity_value * elapsed_seconds
+                # Aktualisiere Demo-Simulator (für Torque-Berechnung im Demo-Modus)
+                if DEMO_MODE and self.nidaqmx_task and self.nidaqmx_task.demo_simulator:
+                    self.nidaqmx_task.demo_simulator.current_angle = angle_raw
 
-                # Aktualisiere Demo-Simulator (für Torque-Berechnung)
-                if self.nidaqmx_task and self.nidaqmx_task.demo_simulator:
-                    self.nidaqmx_task.demo_simulator.current_angle = simulated_angle_raw
-
-                # Bei Single-Turn Encoder: Wrap auf 0-360° und dann Unwrap
+                # Bei Single-Turn Encoder: Unwrap-Logik anwenden für kontinuierlichen Winkel
                 if ANGLE_ENCODER_MODE == "single_turn":
-                    # Simuliere Encoder-Verhalten: Nur 0-360° ausgeben
-                    angle_0_360 = simulated_angle_raw % 360.0
+                    # SSI-Encoder gibt 0-360° aus, wir wollen kontinuierlichen Winkel (0°, 361°, 720°, ...)
+                    angle_0_360 = angle_raw % 360.0
                     angle = self.unwrap_angle(angle_0_360)  # Kontinuierlichen Winkel berechnen
                 else:
-                    # Multi-Turn: Direkter Winkel (kein Wrap)
-                    angle = simulated_angle_raw
+                    # Multi-Turn: Direkter Winkel ohne Unwrap
+                    angle = angle_raw
 
-        elif ANGLE_MEASUREMENT_SOURCE == "daq":
-            # HARDWARE-MODUS: Winkel vom NI-6000 DAQ lesen (SSI Encoder via Motrona)
-            try:
-                angle_voltage = self.nidaqmx_task.read_angle_voltage()
-                angle_0_360 = self.nidaqmx_task.scale_voltage_to_angle(angle_voltage)
-                angle = self.unwrap_angle(angle_0_360)  # Kontinuierlicher Winkel mit Unwrap
             except Exception as e:
-                self.logger.warning(f"Fehler beim Lesen der Winkelspannung: {e}")
+                self.logger.warning(f"Fehler beim Lesen der Position vom N6 Controller: {e}")
                 angle = 0.0
         else:
-            # HARDWARE-MODUS: Legacy - Position vom Motor-Controller lesen
-            if self.motor_controller and self.motor_controller.is_connected:
-                angle = self.motor_controller.get_position()
+            self.logger.warning("N6 Controller nicht verbunden - Winkel = 0")
+            angle = 0.0
 
         # Spannung vom DAQ lesen (Torque)
         voltage = 0.0
