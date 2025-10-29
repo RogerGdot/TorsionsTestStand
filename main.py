@@ -40,40 +40,33 @@ HAUPTFUNKTIONEN:
 ✓ Live-Visualisierung (Torque vs. Angle Graph)
 ✓ Automatische Stopbedingungen (Max Torque/Max Angle)
 ✓ Home-Position und Nullpunkt-Kalibrierung
-✓ Single-Turn Unwrap-Logik (kontinuierliche Winkelmessung über 360°)
-✓ Umdrehungszähler (vorwärts/rückwärts)
+✓ N6 Nanotec Controller mit SSI-Encoder (Multi-Turn, kontinuierlicher Winkel)
+✓ Modbus TCP Kommunikation via NanoLib
 ✓ Datenaufzeichnung in Textdatei mit Zeitstempel
 ✓ GUI mit Dark-Mode Theme
 
 MESSABLAUF:
 -----------
-1. Hardware aktivieren → NI-6000 DAQ + Motor-Controller initialisieren
+1. Hardware aktivieren → NI-6000 DAQ + N6 Nanotec Controller initialisieren
 2. Home-Position → Motor auf 0° fahren, Sensoren kalibrieren
 3. Parameter setzen → Max Angle, Max Torque, Max Velocity
 4. Messung starten → Motor dreht mit konstanter Geschwindigkeit
 5. Datenerfassung → Timer liest alle 100ms Torque und Angle
-6. Unwrap-Logik → Software zählt Umdrehungen bei Single-Turn Encoder
+6. Position-Messung → N6 Controller liest SSI-Encoder und berechnet kontinuierlichen Winkel
 7. Stopbedingung → Automatischer Stopp bei Max Angle oder Max Torque
 8. Daten speichern → Zeitstempel, Spannung, Torque, Angle in Datei
 
-WINKEL-MESSUNG (NEU in V2.0):
------------------------------
-Single-Turn Modus (Standard):
-  - Encoder gibt 0-360° aus (wiederholt bei jeder Umdrehung)
-  - Software erkennt Übergang 360°→0° oder 0°→360°
-  - Umdrehungszähler wird automatisch erhöht/verringert
-  - Kontinuierlicher Winkel = Rohwinkel + (360° × Umdrehungen)
-
-Multi-Turn Modus (Vorbereitet):
-  - Absolute Positionierung über mehrere Umdrehungen
-  - Keine Unwrap-Logik erforderlich
+WINKEL-MESSUNG:
+---------------
+- SSI-Encoder (13-bit, 8192 counts/rev) direkt am N6 Controller
+- N6 Controller macht Multi-Turn intern (kontinuierlicher Winkel über mehrere Umdrehungen)
+- Software liest Position direkt via Modbus TCP (Object Dictionary 0x6064)
 
 KONFIGURATION:
 --------------
 Alle wichtigen Parameter können am Anfang dieser Datei angepasst werden:
 - DEMO_MODE: True/False für Simulation
-- ANGLE_MEASUREMENT_SOURCE: "daq" oder "motor"
-- ANGLE_ENCODER_MODE: "single_turn" oder "multi_turn"
+- N6_IP_ADDRESS: IP-Adresse des N6 Nanotec Controllers
 - DAQ-Kanäle, Skalierung, Messintervall, etc.
 
 BEDIENUNG:
@@ -98,17 +91,14 @@ Projektordner/YYYYMMDD_HHMMSS_Probenname/
 FEHLERBEHEBUNG:
 ---------------
 - Hardware-Fehler → Prüfe Verkabelung und DAQ-Konfiguration
-- Keine Winkelwerte → Prüfe DAQ_CHANNEL_ANGLE und Motrona-Verbindung
-- Falsche Wraps → Erhöhe Sampling-Rate (verringere MEASUREMENT_INTERVAL)
-- Motor reagiert nicht → Prüfe Motor-Controller Verbindung und Typ
+- Keine Winkelwerte → Prüfe N6 Modbus TCP Verbindung und SSI-Encoder
+- Motor reagiert nicht → Prüfe N6_IP_ADDRESS und Netzwerkverbindung
 
 WEITERE DOKUMENTATION:
 ----------------------
-Siehe: SSI_ENCODER_INTEGRATION.md für detaillierte Informationen zu:
-- Systemarchitektur
-- Programmablaufpläne (PAP)
-- Unwrap-Algorithmus
-- Validierung und Testing
+- CLAUDE.md: Projektübersicht und Entwickler-Hinweise
+- Docs/N6_ModbusTCP_Technisches-Handbuch_V1.1.0.pdf: N6 Controller Dokumentation
+- src/hardware/n6_nanotec_controller.py: NanoLib Implementierung
 """
 
 import logging
@@ -161,10 +151,8 @@ DAQ_VOLTAGE_RANGE = 10.0  # ±10V Messbereich
 
 # SSI-Encoder Konfiguration (direkt am N6 Controller)
 # Encoder: RS Components RSA 58E SSI (13 Bit Single-Turn = 8192 counts/rev)
-# Der N6 Controller liest den SSI-Encoder intern und stellt die Position via Modbus bereit
-ANGLE_MEASUREMENT_SOURCE = "motor"  # Winkel wird vom N6 Controller gelesen (nicht mehr DAQ)
-ANGLE_ENCODER_MODE = "single_turn"  # "single_turn" = 0-360° mit Software-Unwrap, "multi_turn" = Multi-Turn
-ANGLE_WRAP_THRESHOLD = 180.0  # Schwellwert für Wrap-Detection [Grad]
+# Der N6 Controller liest den SSI-Encoder intern, macht Multi-Turn und stellt
+# die kontinuierliche Position via Modbus Object Dictionary (0x6064) bereit
 
 # Mess-Konfiguration
 MEASUREMENT_INTERVAL = 100  # Messintervall in Millisekunden (10 Hz = 100ms)
@@ -208,10 +196,9 @@ class MainWindow(QMainWindow):
 
     Wichtige Attribute:
     -------------------
-    - nidaqmx_task: Verbindung zum NI-6000 DAQ
-    - motor_controller: Verbindung zum Schrittmotor
+    - nidaqmx_task: Verbindung zum NI-6000 DAQ (Torque)
+    - motor_controller: N6 Nanotec Controller (Position via SSI-Encoder)
     - is_process_running: Flag ob Messung aktiv ist
-    - turn_counter: Zählt Umdrehungen (für Single-Turn Encoder)
     - torque_data, angle_data: Listen für Graph-Darstellung
     """
 
@@ -301,12 +288,7 @@ class MainWindow(QMainWindow):
            - max_torque_value: Maximales Drehmoment bevor Stopp [Nm]
            - max_velocity_value: Motor-Geschwindigkeit [Grad/s]
 
-        4. Unwrap-Logik (für Single-Turn Encoder):
-           - prev_angle_deg: Vorheriger Winkelwert für Vergleich
-           - turn_counter: Anzahl kompletter Umdrehungen
-           - angle_continuous_deg: Kontinuierlicher Winkel über 360° hinaus
-
-        5. Datenspeicherung:
+        4. Datenspeicherung:
            - torque_data: Liste aller gemessenen Drehmomente
            - angle_data: Liste aller gemessenen Winkel
            - project_dir: Hauptordner für Messdaten
@@ -350,14 +332,6 @@ class MainWindow(QMainWindow):
         self.max_angle_value = DEFAULT_MAX_ANGLE  # Max Winkel [°] (z.B. 720° = 2 Umdrehungen)
         self.max_torque_value = DEFAULT_MAX_TORQUE  # Max Drehmoment [Nm] (z.B. 15 Nm)
         self.max_velocity_value = DEFAULT_MAX_VELOCITY  # Motor-Geschwindigkeit [°/s] (z.B. 10°/s)
-
-        # --- Unwrap-Logik für Single-Turn Encoder (0-360° mit Umdrehungszähler) ---
-        # Der SSI-Encoder gibt nur 0-360° aus. Bei 360° springt er zurück auf 0°.
-        # Diese Variablen ermöglichen kontinuierliche Winkelmessung über mehrere Umdrehungen.
-        self.prev_angle_deg = 0.0  # Vorheriger Winkelwert (zum Vergleich mit aktuellem)
-        self.turn_counter = 0  # Umdrehungszähler: +1 bei 360°→0°, -1 bei 0°→360°
-        self.angle_continuous_deg = 0.0  # Kontinuierlicher Winkel: z.B. 361°, 720°, -90° etc.
-        self.angle_continuous_deg = 0.0  # Kontinuierlicher Winkel über mehrere Umdrehungen
 
     def closeEvent(self, event) -> None:
         """
@@ -1275,155 +1249,6 @@ class MainWindow(QMainWindow):
             f"✓ Parameter akzeptiert - Angle: {self.max_angle_value}°, Torque: {self.max_torque_value} Nm, Velocity: {self.max_velocity_value}°/s"
         )
 
-    def unwrap_angle(self, angle_now: float) -> float:
-        """
-        ╔═══════════════════════════════════════════════════════════════════════╗
-        ║  UNWRAP-LOGIK für Single-Turn Encoder (0-360°)                        ║
-        ║  Erkennt Umdrehungen und berechnet kontinuierlichen Winkel            ║
-        ╚═══════════════════════════════════════════════════════════════════════╝
-
-        PROBLEM:
-        --------
-        Der SSI-Encoder gibt nur 0-360° aus. Bei einer kompletten Umdrehung
-        springt der Wert von 360° zurück auf 0° (oder umgekehrt).
-
-        Beispiel:
-          Zeit  | Rohwinkel | Problem
-          ------|-----------|----------------------------------
-          0.0s  | 350°      | Normal
-          0.1s  | 358°      | Normal
-          0.2s  | 5°        | SPRUNG! (hat nicht rückwärts gedreht!)
-          0.3s  | 12°       | Normal (eigentlich bei 372°)
-
-        LÖSUNG:
-        -------
-        Diese Funktion erkennt den Sprung und zählt die Umdrehungen:
-        - Vorwärts (im Uhrzeigersinn): turn_counter erhöhen
-        - Rückwärts (gegen Uhrzeigersinn): turn_counter verringern
-        - Kontinuierlicher Winkel = Rohwinkel + (360° × Umdrehungen)
-
-        FUNKTIONSWEISE:
-        ---------------
-        1. Berechne delta = aktueller_winkel - vorheriger_winkel
-        2. Wenn delta < -180° → Vorwärts-Wrap erkannt (360°→0°) → counter++
-        3. Wenn delta > +180° → Rückwärts-Wrap erkannt (0°→360°) → counter--
-        4. Berechne kontinuierlichen Winkel
-        5. Speichere aktuellen Winkel für nächsten Vergleich
-
-        BEISPIELE:
-        ----------
-        Vorwärts (im Uhrzeigersinn):
-          prev=359°, now=1°   → delta=-358° (< -180°) → counter: 0→1
-          Ergebnis: 1° + (360°×1) = 361°  ✓
-
-        Rückwärts (gegen Uhrzeigersinn):
-          prev=1°, now=359°   → delta=+358° (> +180°) → counter: 0→-1
-          Ergebnis: 359° + (360°×-1) = -1°  ✓
-
-        Normale Bewegung:
-          prev=100°, now=110° → delta=+10° (-180° < delta < +180°)
-          Ergebnis: 110° + (360°×0) = 110°  ✓
-
-        PARAMETER:
-        ----------
-        angle_now : float
-            Aktueller Rohwinkel vom Encoder [0-360°]
-            Beispiel: 5.2° oder 359.8°
-
-        RÜCKGABE:
-        ---------
-        float
-            Kontinuierlicher Winkel (kann jeden Wert haben)
-            Beispiele: 10°, 361°, 720°, -90°, etc.
-
-        WICHTIG:
-        --------
-        - Diese Funktion muss bei JEDER Messung aufgerufen werden!
-        - Funktioniert nur bei kontinuierlicher Abtastung (kein Ausfall)
-        - Bei zu schneller Drehung kann Wrap übersehen werden
-          (wenn delta > 180° bei normaler Bewegung)
-        """
-        # Multi-Turn Modus: Encoder gibt bereits absoluten Winkel
-        # → Keine Unwrap-Logik nötig
-        if ANGLE_ENCODER_MODE == "multi_turn":
-            return angle_now
-
-        # ─────────────────────────────────────────────────────────
-        # Single-Turn Modus: Wrap-Detection durchführen
-        # ─────────────────────────────────────────────────────────
-
-        # Schritt 1: Berechne Differenz zum vorherigen Wert
-        delta = angle_now - self.prev_angle_deg
-
-        # Beispiel: prev=359°, now=1° → delta = 1-359 = -358°
-        # Beispiel: prev=100°, now=110° → delta = 110-100 = +10°
-
-        # Schritt 2: Prüfe ob VORWÄRTS-Wrap (360° → 0°)
-        # Delta ist stark negativ → Drehung im Uhrzeigersinn über 360° hinaus
-        if delta < -ANGLE_WRAP_THRESHOLD:  # ANGLE_WRAP_THRESHOLD = 180°
-            self.turn_counter += 1  # Eine Umdrehung mehr im Uhrzeigersinn
-            self.logger.debug(f"✓ Wrap erkannt: 360°→0° | Umdrehungen: {self.turn_counter} | Delta: {delta:.1f}°")
-
-        # Schritt 3: Prüfe ob RÜCKWÄRTS-Wrap (0° → 360°)
-        # Delta ist stark positiv → Drehung gegen Uhrzeigersinn über 0° hinaus
-        elif delta > ANGLE_WRAP_THRESHOLD:
-            self.turn_counter -= 1  # Eine Umdrehung weniger (rückwärts)
-            self.logger.debug(f"✓ Wrap erkannt: 0°→360° | Umdrehungen: {self.turn_counter} | Delta: {delta:.1f}°")
-
-        # Wenn delta zwischen -180° und +180°: Normale Bewegung, kein Wrap
-
-        # Schritt 4: Berechne kontinuierlichen Winkel
-        # Formel: aktueller_winkel + (360° pro Umdrehung × Anzahl Umdrehungen)
-        self.angle_continuous_deg = angle_now + (360.0 * self.turn_counter)
-
-        # Beispiele:
-        #   turn_counter=0, angle_now=45°  → 45° + 0 = 45°
-        #   turn_counter=1, angle_now=45°  → 45° + 360° = 405°
-        #   turn_counter=2, angle_now=0°   → 0° + 720° = 720°
-        #   turn_counter=-1, angle_now=270° → 270° - 360° = -90°
-
-        # Schritt 5: Aktuellen Winkel speichern für nächsten Vergleich
-        self.prev_angle_deg = angle_now
-
-        # Schritt 6: Kontinuierlichen Winkel zurückgeben
-        return self.angle_continuous_deg
-
-    def reset_angle_unwrap(self) -> None:
-        """
-        Setzt die Unwrap-Logik zurück auf Startwerte.
-
-        WANN AUFRUFEN:
-        --------------
-        - Vor jeder neuen Messung (Start Measurement)
-        - Nach Home-Position (Kalibrierung)
-        - Nach Hardware-Initialisierung
-
-        WAS PASSIERT:
-        -------------
-        - Umdrehungszähler → 0
-        - Vorheriger Winkel → 0°
-        - Kontinuierlicher Winkel → 0°
-
-        WARUM WICHTIG:
-        --------------
-        Ohne Reset würde der Umdrehungszähler von der vorherigen Messung
-        weiter gezählt werden, was zu falschen Winkeln führt!
-
-        Beispiel ohne Reset:
-          Erste Messung endet bei 720° (2 Umdrehungen, counter=2)
-          Zweite Messung startet → counter bleibt bei 2
-          Erster Winkel 10° → 10° + 720° = 730° (FALSCH!)
-
-        Beispiel mit Reset:
-          Erste Messung endet bei 720° (counter=2)
-          Reset → counter=0
-          Zweite Messung startet → counter=0
-          Erster Winkel 10° → 10° + 0° = 10° (RICHTIG!)
-        """
-        self.prev_angle_deg = 0.0  # Kein vorheriger Winkel mehr gespeichert
-        self.turn_counter = 0  # Umdrehungszähler auf 0 zurücksetzen
-        self.angle_continuous_deg = 0.0  # Kontinuierlicher Winkel auf 0
-        self.logger.info("✓ Winkel-Unwrap zurückgesetzt (Turns: 0, Angle: 0°)")
 
     def update_sample_name(self) -> None:
         """
@@ -1813,8 +1638,7 @@ class MainWindow(QMainWindow):
             if self.nidaqmx_task.is_task_created:
                 self.logger.info("✓ NI-6000 DAQ erfolgreich initialisiert")
                 self.logger.info(f"  → Torque-Messbereich: ±{TORQUE_SENSOR_MAX_NM} Nm")
-                self.logger.info(f"  → Angle-Modus: {ANGLE_ENCODER_MODE.upper()}")
-                self.logger.info("  → Angle-Quelle: N6 Controller (SSI via Modbus)")
+                self.logger.info("  → Angle-Quelle: N6 Controller (SSI-Encoder via Modbus, Multi-Turn)")
 
                 # LED auf GRÜN setzen (Erfolg)
                 self.dmm_led.setStyleSheet("background-color: green; border-radius: 12px; border: 2px solid black;")
@@ -2075,17 +1899,12 @@ class MainWindow(QMainWindow):
            - Speichert als Offset (Nullpunkt)
            - Alle folgenden Messungen werden korrigiert
 
-        4. Winkel-Unwrap zurücksetzen:
-           - turn_counter = 0
-           - prev_angle_deg = 0
-           - angle_continuous_deg = 0
-
         WARUM WICHTIG:
         --------------
         Vor jeder Messung sollte Home-Position aufgerufen werden:
         ✓ Motor startet von definierter Position (0°)
         ✓ Torque-Sensor hat korrekten Nullpunkt (keine Vorspannung)
-        ✓ Unwrap-Logik beginnt von Neuem (keine Altdaten)
+        ✓ N6 Controller Position auf 0° gesetzt
         ✓ Reproduzierbare Messergebnisse garantiert
 
         BEISPIEL:
@@ -2159,11 +1978,6 @@ class MainWindow(QMainWindow):
             self.logger.info("→ Kalibriere Torque-Nullpunkt...")
             self.nidaqmx_task.calibrate_zero()
             self.logger.info("✓ Torque-Nullpunkt kalibriert (Sensor-Offset gespeichert)")
-
-        # ═══════════════════════════════════════════════════════════
-        # SCHRITT 3: WINKEL-UNWRAP ZURÜCKSETZEN
-        # ═══════════════════════════════════════════════════════════
-        self.reset_angle_unwrap()
 
         # ═══════════════════════════════════════════════════════════
         # ERFOLG MELDEN
@@ -2296,17 +2110,10 @@ class MainWindow(QMainWindow):
         Es werden KEINE Daten gespeichert und der Graph wird NICHT aktualisiert.
         """
         try:
-            # Winkel messen (abhängig von ANGLE_MEASUREMENT_SOURCE)
-            if ANGLE_MEASUREMENT_SOURCE == "daq":
-                # Winkel vom NI-6000 DAQ lesen (SSI Encoder via Motrona)
-                angle_voltage = self.nidaqmx_task.read_angle_voltage()
-                angle_0_360 = self.nidaqmx_task.scale_voltage_to_angle(angle_voltage)
-                angle = self.unwrap_angle(angle_0_360)  # Kontinuierlicher Winkel mit Unwrap
-            else:
-                # Legacy: Position vom Motor-Controller lesen
-                angle = 0.0
-                if self.motor_controller and self.motor_controller.is_connected:
-                    angle = self.motor_controller.get_position()
+            # Winkel vom N6 Controller lesen
+            angle = 0.0
+            if self.motor_controller and self.motor_controller.is_connected:
+                angle = self.motor_controller.get_position()
 
             # Spannung lesen
             voltage = self.nidaqmx_task.read_torque_voltage(angle)
@@ -2350,20 +2157,19 @@ class MainWindow(QMainWindow):
         ✓ Sample-Name muss gesetzt sein
         ✓ Keine andere Messung darf laufen
 
-        ABLAUF (12 SCHRITTE):
+        ABLAUF (11 SCHRITTE):
         ---------------------
         1. Prüfe ob bereits Messung läuft → Abbruch
         2. Prüfe ob Hardware bereit → Fehlermeldung
         3. Parameter auslesen (max_angle, max_torque, max_velocity)
         4. Startzeit speichern (für Zeitstempel in Daten)
-        5. Winkel-Unwrap zurücksetzen (turn_counter = 0)
-        6. Messordner + Datei erstellen mit Header
-        7. Motor starten (kontinuierliche Bewegung)
-        8. Measurement Timer starten (ruft measure() alle 100ms auf)
-        9. Graph-Daten löschen (alte Kurve entfernen)
-        10. Status setzen (is_process_running = True)
-        11. LED auf GRÜN setzen (zeigt laufende Messung)
-        12. Setup-Controls deaktivieren (Parameter nicht änderbar)
+        5. Messordner + Datei erstellen mit Header
+        6. Motor starten (kontinuierliche Bewegung)
+        7. Measurement Timer starten (ruft measure() alle 100ms auf)
+        8. Graph-Daten löschen (alte Kurve entfernen)
+        9. Status setzen (is_process_running = True)
+        10. LED auf GRÜN setzen (zeigt laufende Messung)
+        11. Setup-Controls deaktivieren (Parameter nicht änderbar)
 
         MESS-PARAMETER:
         ---------------
@@ -2440,16 +2246,12 @@ class MainWindow(QMainWindow):
         self.logger.info(f"Max Angle: {max_angle}°")
         self.logger.info(f"Max Torque: {max_torque} Nm")
         self.logger.info(f"Max Velocity: {max_velocity}°/s")
-        self.logger.info(f"Angle Source: {ANGLE_MEASUREMENT_SOURCE.upper()}")
-        self.logger.info(f"Encoder Mode: {ANGLE_ENCODER_MODE.upper()}")
+        self.logger.info("Position: N6 Controller (SSI-Encoder, Multi-Turn)")
         self.logger.info("=" * 60)
 
         # Startzeit speichern
         self.start_time_timestamp = datetime.now()
         self.logger.info(f"Startzeit: {self.start_time_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        # Winkel-Unwrap zurücksetzen
-        self.reset_angle_unwrap()
 
         # Messordner erstellen
         if not self.create_measurement_folder():
@@ -2864,7 +2666,7 @@ class MainWindow(QMainWindow):
            Beispiel: 2.5V × 2 Nm/V = 5 Nm
 
         4. Angle: Kontinuierlicher Winkel [°]
-           Mit Unwrap-Logik (kann > 360° sein)
+           N6 Controller liefert Multi-Turn Position (kann > 360° sein)
            Beispiel: 450° = 1.25 Umdrehungen
 
         ABLAUF:
@@ -2965,30 +2767,28 @@ class MainWindow(QMainWindow):
         Sie wird periodisch vom Measurement Timer aufgerufen und
         koordiniert die komplette Datenerfassung.
 
-        ABLAUF (10 SCHRITTE):
-        ---------------------
+        ABLAUF (9 SCHRITTE):
+        --------------------
         1. Prüfe ob Messung läuft → sonst Abbruch
         2. Zeitstempel berechnen (seit Messstart)
-        3. Winkel messen (DAQ oder Motor, je nach Konfiguration)
-        4. Unwrap-Logik anwenden (für kontinuierlichen Winkel)
-        5. Torque-Spannung vom DAQ lesen
-        6. Drehmoment berechnen (Spannung × Scale)
-        7. Daten zum Graph hinzufügen
-        8. Daten in Datei schreiben
-        9. GUI aktualisieren (Anzeige-Felder)
-        10. Stopbedingungen prüfen (Max Angle/Torque erreicht?)
+        3. Position vom N6 Controller lesen (kontinuierlicher Winkel)
+        4. Torque-Spannung vom DAQ lesen
+        5. Drehmoment berechnen (Spannung × Scale)
+        6. Daten zum Graph hinzufügen
+        7. Daten in Datei schreiben
+        8. GUI aktualisieren (Anzeige-Felder)
+        9. Stopbedingungen prüfen (Max Angle/Torque erreicht?)
 
-        MESS-QUELLEN (abhängig von ANGLE_MEASUREMENT_SOURCE):
-        ------------------------------------------------------
-        A) ANGLE_MEASUREMENT_SOURCE = "daq" (Standard V2.0):
-           - Winkel: NI-6000 DAQ Kanal ai1 (0-10V vom Motrona)
-           - Torque: NI-6000 DAQ Kanal ai0 (±10V vom DF-30)
-           - Vorteil: Echter Encoder-Winkel (unabhängig vom Motor)
+        MESS-QUELLEN:
+        -------------
+        - Winkel: N6 Nanotec Controller via Modbus TCP (OD 0x6064)
+          * SSI-Encoder (13-bit, 8192 counts/rev)
+          * Multi-Turn Modus (N6 macht kontinuierlichen Winkel intern)
+          * Kontinuierlicher Winkel über mehrere Umdrehungen (0°, 361°, 720°, ...)
 
-        B) ANGLE_MEASUREMENT_SOURCE = "motor" (Legacy V1.0):
-           - Winkel: Motor-Controller Position
-           - Torque: NI-6000 DAQ Kanal ai0
-           - Nachteil: Motor-Schritte nicht immer genau
+        - Torque: NI-6000 DAQ Kanal ai0 (±10V vom DF-30 Sensor)
+          * Messbereich: ±20 Nm
+          * Skalierung: 2.0 Nm/V
 
         ZEITSTEMPEL-BERECHNUNG:
         -----------------------
@@ -2996,20 +2796,6 @@ class MainWindow(QMainWindow):
           elapsed = jetzt - start_time
           Format: HH:MM:SS.f (Stunden:Minuten:Sekunden.Zehntelsekunde)
           Beispiel: 00:01:23.5 = 1 Min 23.5 Sek seit Start
-
-        UNWRAP-LOGIK (Single-Turn Encoder):
-        -----------------------------------
-        Raw Encoder: 0-360° (springt bei 360° auf 0°)
-        Nach Unwrap: 0°, 361°, 720°, etc. (kontinuierlich)
-
-        Beispiel:
-          Zeit | Raw Angle | Unwrap Angle | Turns
-          -----|-----------|--------------|------
-          0.0s | 0°        | 0°           | 0
-          1.0s | 50°       | 50°          | 0
-          2.0s | 350°      | 350°         | 0
-          3.0s | 10°       | 370°         | 1  ← Wrap erkannt!
-          4.0s | 100°      | 460°         | 1
 
         STOPBEDINGUNGEN:
         ----------------
@@ -3056,9 +2842,9 @@ class MainWindow(QMainWindow):
         ----------
         Wenn Messdaten falsch:
         1. Prüfe TORQUE_SCALE (Spannung → Nm korrekt?)
-        2. Prüfe Unwrap-Logik (Winkel kontinuierlich?)
-        3. Prüfe DAQ-Kanäle (ai0=Torque, ai1=Angle?)
-        4. Logge Werte (self.logger.debug(f"V={voltage}, T={torque}"))
+        2. Prüfe N6 Modbus TCP Verbindung (Position wird gelesen?)
+        3. Prüfe DAQ-Kanal (ai0=Torque)
+        4. Logge Werte (self.logger.debug(f"V={voltage}, T={torque}, A={angle}"))
 
         AUFRUF:
         -------
@@ -3095,18 +2881,13 @@ class MainWindow(QMainWindow):
                 # Position vom N6 auslesen (in Grad)
                 angle_raw = self.motor_controller.get_position()
 
+                # N6 Controller liefert bereits kontinuierlichen Winkel (Multi-Turn)
+                # Kein Unwrap nötig, da der N6 das intern macht
+                angle = angle_raw
+
                 # Aktualisiere Demo-Simulator (für Torque-Berechnung im Demo-Modus)
                 if DEMO_MODE and self.nidaqmx_task and self.nidaqmx_task.demo_simulator:
-                    self.nidaqmx_task.demo_simulator.current_angle = angle_raw
-
-                # Bei Single-Turn Encoder: Unwrap-Logik anwenden für kontinuierlichen Winkel
-                if ANGLE_ENCODER_MODE == "single_turn":
-                    # SSI-Encoder gibt 0-360° aus, wir wollen kontinuierlichen Winkel (0°, 361°, 720°, ...)
-                    angle_0_360 = angle_raw % 360.0
-                    angle = self.unwrap_angle(angle_0_360)  # Kontinuierlichen Winkel berechnen
-                else:
-                    # Multi-Turn: Direkter Winkel ohne Unwrap
-                    angle = angle_raw
+                    self.nidaqmx_task.demo_simulator.current_angle = angle
 
             except Exception as e:
                 self.logger.warning(f"Fehler beim Lesen der Position vom N6 Controller: {e}")
